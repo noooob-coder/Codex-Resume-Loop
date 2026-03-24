@@ -225,7 +225,7 @@ fn uninstall_cli(mut purge_history: bool) -> Result<()> {
     remove_command_aliases(&layout);
 
     let current_exe = env::current_exe().context("Unable to locate current executable")?;
-    if current_exe.starts_with(&layout.install_root) {
+    if cli_running_from_install_root(&current_exe, &layout.install_root) {
         #[cfg(target_os = "windows")]
         {
             let config_dir = if purge_history {
@@ -371,11 +371,11 @@ fn cli_install_layout() -> Result<CliInstallLayout> {
             install_root: base_dirs
                 .data_local_dir()
                 .join("Programs")
-                .join("codex-resume-loop"),
+                .join("Codex-Resume-Loop"),
             command_dir: base_dirs
                 .data_local_dir()
                 .join("Programs")
-                .join("codex-resume-loop"),
+                .join("Codex-Resume-Loop"),
             primary_name: "crl.exe".to_owned(),
             legacy_name: "codex-resume-loop.exe".to_owned(),
         })
@@ -390,6 +390,29 @@ fn cli_install_layout() -> Result<CliInstallLayout> {
             legacy_name: "codex-resume-loop".to_owned(),
         })
     }
+}
+
+fn cli_running_from_install_root(current_exe: &Path, install_root: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let current = normalize_windows_path(current_exe);
+        let install = normalize_windows_path(install_root);
+        current.starts_with(&install)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        current_exe.starts_with(install_root)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_windows_path(path: &Path) -> String {
+    let mut value = path.to_string_lossy().replace('/', "\\").to_lowercase();
+    while value.ends_with('\\') {
+        value.pop();
+    }
+    value
 }
 
 #[cfg(target_os = "windows")]
@@ -414,6 +437,7 @@ fn schedule_windows_uninstall(install_root: &Path, config_dir: Option<&Path>) ->
         .arg("Hidden")
         .arg("-File")
         .arg(&script_path);
+    command.current_dir(env::temp_dir());
     command.spawn().with_context(|| {
         format!(
             "Unable to launch temp uninstall script: {}",
@@ -439,7 +463,7 @@ fn build_windows_uninstall_script(
         })
         .unwrap_or_default();
     format!(
-        "$pidToWait = {pid}\r\ntry {{ Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue }} catch {{ }}\r\nfor ($i = 0; $i -lt 50; $i++) {{\r\n  try {{ Remove-Item -Recurse -Force '{install_root}' -ErrorAction Stop; break }} catch {{ Start-Sleep -Milliseconds 100 }}\r\n}}\r\n{config_cleanup}Remove-Item -Force $PSCommandPath -ErrorAction SilentlyContinue\r\n",
+        "$pidToWait = {pid}\r\n$logPath = $env:CRL_UNINSTALL_LOG\r\nfunction Write-UninstallLog($message) {{ if ($logPath) {{ Add-Content -Path $logPath -Value $message }} }}\r\nWrite-UninstallLog \"wait-start\"\r\ntry {{ Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue }} catch {{ Write-UninstallLog $_.ToString() }}\r\nWrite-UninstallLog \"wait-done\"\r\n$currentPath = [Environment]::GetEnvironmentVariable('Path', 'User')\r\nif ($currentPath) {{\r\n  $parts = $currentPath -split ';' | Where-Object {{ $_ -and ($_.TrimEnd('\\') -ine '{install_root}') }}\r\n  [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'User')\r\n}}\r\nfor ($i = 0; $i -lt 50; $i++) {{\r\n  try {{ Remove-Item -Recurse -Force '{install_root}' -ErrorAction Stop; Write-UninstallLog \"remove-ok\"; break }} catch {{ Write-UninstallLog $_.ToString(); Start-Sleep -Milliseconds 100 }}\r\n}}\r\n{config_cleanup}Remove-Item -Force $PSCommandPath -ErrorAction SilentlyContinue\r\n",
         pid = process_id,
         install_root = install_root.display(),
         config_cleanup = config_cleanup,
@@ -778,6 +802,7 @@ mod tests {
 
         assert!(script.contains("$pidToWait = 42"));
         assert!(script.contains("Wait-Process -Id $pidToWait"));
+        assert!(script.contains("[Environment]::SetEnvironmentVariable('Path'"));
         assert!(script.contains("Start-Sleep -Milliseconds 100"));
         assert!(script.contains(r"AppData\Roaming\shcem\crl-desktop\config"));
         assert!(!script.contains("ping 127.0.0.1"));
