@@ -54,6 +54,9 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; Value
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Codex-Resume-Loop Desktop"; Flags: nowait postinstall skipifsilent
 
 [Code]
+var
+  RemoveHistoryPage: TInputOptionWizardPage;
+
 function NeedsAddPath(Param: string): boolean;
 var
   OrigPath: string;
@@ -61,4 +64,30 @@ begin
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', OrigPath) then
     OrigPath := '';
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
+end;
+
+procedure InitializeUninstallProgressForm();
+begin
+  RemoveHistoryPage := CreateInputOptionPage(
+    wpWelcome,
+    'Uninstall options',
+    'Choose whether to remove local Codex-Resume-Loop history',
+    'If you keep local history, installed binaries will be removed but your local state and logs will remain on this machine.',
+    True,
+    False
+  );
+  RemoveHistoryPage.Add('Also remove local state and history');
+  RemoveHistoryPage.Values[0] := False;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ConfigDir: string;
+begin
+  if (CurUninstallStep = usPostUninstall) and RemoveHistoryPage.Values[0] then
+  begin
+    ConfigDir := ExpandConstant('{userappdata}\shcem\crl-desktop\config');
+    if DirExists(ConfigDir) then
+      DelTree(ConfigDir, True, True, True);
+  end;
 end;

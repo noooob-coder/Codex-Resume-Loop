@@ -5,12 +5,16 @@ use crl_desktop::codex::{
     resolve_resume_command,
 };
 use crl_desktop::model::SessionSummary;
+use crl_desktop::persistence::config_dir_path;
 use directories::BaseDirs;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::ExitStatus;
+
+#[cfg(target_os = "windows")]
+use std::process::Command;
 
 #[derive(Debug, Parser)]
 #[command(name = "crl", about = "Codex Resume Loop CLI")]
@@ -35,6 +39,8 @@ struct Cli {
     codex_home: Option<PathBuf>,
     #[arg(long, alias = "DryRun")]
     dry_run: bool,
+    #[arg(long, alias = "PurgeHistory")]
+    purge_history: bool,
     times: Option<u32>,
     prompt: Option<String>,
 }
@@ -47,7 +53,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if cli.uninstall {
-        uninstall_cli()?;
+        uninstall_cli(cli.purge_history)?;
         return Ok(());
     }
 
@@ -158,33 +164,34 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
 }
 
 fn install_cli() -> Result<()> {
+    let layout = cli_install_layout()?;
     let current_exe = env::current_exe().context("Unable to locate current executable")?;
-    let base_dirs = BaseDirs::new().context("Unable to locate user directories")?;
-    let install_root = base_dirs
-        .data_local_dir()
-        .join("Programs")
-        .join("codex-resume-loop");
-    let bin_dir = base_dirs.home_dir().join(".local").join("bin");
-    fs::create_dir_all(&install_root).with_context(|| {
+    fs::create_dir_all(&layout.install_root).with_context(|| {
         format!(
             "Unable to create install directory: {}",
-            install_root.display()
+            layout.install_root.display()
         )
     })?;
-    fs::create_dir_all(&bin_dir)
-        .with_context(|| format!("Unable to create bin directory: {}", bin_dir.display()))?;
+    fs::create_dir_all(&layout.command_dir).with_context(|| {
+        format!(
+            "Unable to create command directory: {}",
+            layout.command_dir.display()
+        )
+    })?;
 
-    let primary_exe = install_root.join("crl.exe");
-    let legacy_exe = install_root.join("codex-resume-loop.exe");
+    let primary_exe = layout.install_root.join(&layout.primary_name);
+    let legacy_exe = layout.install_root.join(&layout.legacy_name);
     fs::copy(&current_exe, &primary_exe)
         .with_context(|| format!("Unable to copy CLI to {}", primary_exe.display()))?;
     fs::copy(&current_exe, &legacy_exe)
         .with_context(|| format!("Unable to copy CLI to {}", legacy_exe.display()))?;
 
-    add_to_user_path(&bin_dir)?;
-    remove_old_wrappers(&install_root, &bin_dir)?;
-    copy_alias(&primary_exe, &bin_dir.join("crl.exe"))?;
-    copy_alias(&legacy_exe, &bin_dir.join("codex-resume-loop.exe"))?;
+    add_to_user_path(&layout.command_dir)?;
+    remove_old_wrappers(&layout)?;
+    if layout.command_dir != layout.install_root {
+        copy_alias(&primary_exe, &layout.command_dir.join(&layout.primary_name))?;
+        copy_alias(&legacy_exe, &layout.command_dir.join(&layout.legacy_name))?;
+    }
 
     println!("Installed CLI binaries:");
     println!("  {}", primary_exe.display());
@@ -196,71 +203,65 @@ fn install_cli() -> Result<()> {
     Ok(())
 }
 
-fn uninstall_cli() -> Result<()> {
-    let base_dirs = BaseDirs::new().context("Unable to locate user directories")?;
-    let install_root = base_dirs
-        .data_local_dir()
-        .join("Programs")
-        .join("codex-resume-loop");
-    if !install_root.exists() {
+fn uninstall_cli(mut purge_history: bool) -> Result<()> {
+    let layout = cli_install_layout()?;
+    if !layout.install_root.exists() {
         bail!(
             "Install directory does not exist: {}",
-            install_root.display()
+            layout.install_root.display()
         );
     }
 
     println!("About to uninstall CRL CLI from:");
-    println!("  {}", install_root.display());
+    println!("  {}", layout.install_root.display());
     if !confirm("Continue?", false)? {
         println!("Cancelled.");
         return Ok(());
     }
 
-    let bin_dir = base_dirs.home_dir().join(".local").join("bin");
-    for alias in [
-        "crl.exe",
-        "codex-resume-loop.exe",
-        "crl.cmd",
-        "codex-resume-loop.cmd",
-    ] {
-        let path = bin_dir.join(alias);
-        if path.exists() {
-            let _ = fs::remove_file(&path);
-        }
+    if !purge_history {
+        purge_history = confirm("Also remove local state and history?", false)?;
     }
+    remove_command_aliases(&layout);
 
     let current_exe = env::current_exe().context("Unable to locate current executable")?;
-    if current_exe.starts_with(&install_root) {
-        let script_path = env::temp_dir().join(format!(
-            "crl-uninstall-{}.cmd",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let script = format!(
-            "@echo off\r\nping 127.0.0.1 -n 2 >nul\r\nrmdir /s /q \"{}\"\r\ndel \"%~f0\"\r\n",
-            install_root.display()
-        );
-        fs::write(&script_path, script).with_context(|| {
-            format!(
-                "Unable to write temp uninstall script: {}",
-                script_path.display()
-            )
-        })?;
-        Command::new(&script_path).spawn().with_context(|| {
-            format!(
-                "Unable to launch temp uninstall script: {}",
-                script_path.display()
-            )
-        })?;
-        println!(
-            "Uninstall scheduled. The install directory will be removed after this process exits."
-        );
+    if current_exe.starts_with(&layout.install_root) {
+        #[cfg(target_os = "windows")]
+        {
+            let config_dir = if purge_history {
+                Some(config_dir_path()?)
+            } else {
+                None
+            };
+            schedule_windows_uninstall(&layout.install_root, config_dir.as_deref())?;
+            println!(
+                "Uninstall scheduled. The install directory will be removed after this process exits."
+            );
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            fs::remove_dir_all(&layout.install_root).with_context(|| {
+                format!(
+                    "Unable to remove install directory: {}",
+                    layout.install_root.display()
+                )
+            })?;
+            if purge_history {
+                remove_history_dir()?;
+            }
+            println!("Uninstall completed.");
+        }
     } else {
-        fs::remove_dir_all(&install_root).with_context(|| {
+        fs::remove_dir_all(&layout.install_root).with_context(|| {
             format!(
                 "Unable to remove install directory: {}",
-                install_root.display()
+                layout.install_root.display()
             )
         })?;
+        if purge_history {
+            remove_history_dir()?;
+        }
         println!("Uninstall completed.");
     }
 
@@ -294,7 +295,7 @@ fn copy_alias(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_old_wrappers(install_root: &Path, bin_dir: &Path) -> Result<()> {
+fn remove_old_wrappers(layout: &CliInstallLayout) -> Result<()> {
     for old_file in [
         "crl.cmd",
         "codex-resume-loop.cmd",
@@ -305,15 +306,22 @@ fn remove_old_wrappers(install_root: &Path, bin_dir: &Path) -> Result<()> {
         "uninstall.ps1",
         "README.md",
     ] {
-        let path = install_root.join(old_file);
+        let path = layout.install_root.join(old_file);
         if path.exists() {
             fs::remove_file(&path)
                 .with_context(|| format!("Unable to remove old wrapper: {}", path.display()))?;
         }
     }
 
-    for old_file in ["crl.cmd", "codex-resume-loop.cmd"] {
-        let path = bin_dir.join(old_file);
+    for old_file in [
+        "crl.cmd",
+        "codex-resume-loop.cmd",
+        "crl.exe",
+        "codex-resume-loop.exe",
+        "crl",
+        "codex-resume-loop",
+    ] {
+        let path = layout.command_dir.join(old_file);
         if path.exists() {
             fs::remove_file(&path)
                 .with_context(|| format!("Unable to remove old wrapper: {}", path.display()))?;
@@ -321,6 +329,121 @@ fn remove_old_wrappers(install_root: &Path, bin_dir: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn remove_command_aliases(layout: &CliInstallLayout) {
+    for name in [
+        layout.primary_name.as_str(),
+        layout.legacy_name.as_str(),
+        "crl.cmd",
+        "codex-resume-loop.cmd",
+        "crl.ps1",
+        "codex-resume-loop.ps1",
+    ] {
+        let path = layout.command_dir.join(name);
+        if path.exists() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn remove_history_dir() -> Result<()> {
+    let config_dir = config_dir_path()?;
+    if config_dir.exists() {
+        fs::remove_dir_all(&config_dir)
+            .with_context(|| format!("Unable to remove config directory: {}", config_dir.display()))?;
+    }
+    Ok(())
+}
+
+struct CliInstallLayout {
+    install_root: PathBuf,
+    command_dir: PathBuf,
+    primary_name: String,
+    legacy_name: String,
+}
+
+fn cli_install_layout() -> Result<CliInstallLayout> {
+    let base_dirs = BaseDirs::new().context("Unable to locate user directories")?;
+    #[cfg(target_os = "windows")]
+    {
+        Ok(CliInstallLayout {
+            install_root: base_dirs
+                .data_local_dir()
+                .join("Programs")
+                .join("codex-resume-loop"),
+            command_dir: base_dirs
+                .data_local_dir()
+                .join("Programs")
+                .join("codex-resume-loop"),
+            primary_name: "crl.exe".to_owned(),
+            legacy_name: "codex-resume-loop.exe".to_owned(),
+        })
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(CliInstallLayout {
+            install_root: base_dirs.data_local_dir().join("codex-resume-loop"),
+            command_dir: base_dirs.home_dir().join(".local").join("bin"),
+            primary_name: "crl".to_owned(),
+            legacy_name: "codex-resume-loop".to_owned(),
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn schedule_windows_uninstall(install_root: &Path, config_dir: Option<&Path>) -> Result<()> {
+    let script_path = env::temp_dir().join(format!(
+        "crl-uninstall-{}.ps1",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let script = build_windows_uninstall_script(std::process::id(), install_root, config_dir);
+    fs::write(&script_path, script).with_context(|| {
+        format!(
+            "Unable to write temp uninstall script: {}",
+            script_path.display()
+        )
+    })?;
+    let mut command = Command::new("powershell.exe");
+    command
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-WindowStyle")
+        .arg("Hidden")
+        .arg("-File")
+        .arg(&script_path);
+    command.spawn().with_context(|| {
+        format!(
+            "Unable to launch temp uninstall script: {}",
+            script_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_uninstall_script(
+    process_id: u32,
+    install_root: &Path,
+    config_dir: Option<&Path>,
+) -> String {
+    let config_cleanup = config_dir
+        .map(|dir| {
+            format!(
+                "if (Test-Path '{}') {{ Remove-Item -Recurse -Force '{}' -ErrorAction SilentlyContinue }}\r\n",
+                dir.display(),
+                dir.display()
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "$pidToWait = {pid}\r\ntry {{ Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue }} catch {{ }}\r\nfor ($i = 0; $i -lt 50; $i++) {{\r\n  try {{ Remove-Item -Recurse -Force '{install_root}' -ErrorAction Stop; break }} catch {{ Start-Sleep -Milliseconds 100 }}\r\n}}\r\n{config_cleanup}Remove-Item -Force $PSCommandPath -ErrorAction SilentlyContinue\r\n",
+        pid = process_id,
+        install_root = install_root.display(),
+        config_cleanup = config_cleanup,
+    )
 }
 
 fn find_session(sessions: &[SessionSummary], session_id: &str) -> Result<SessionSummary> {
@@ -592,6 +715,7 @@ mod tests {
             max_sessions: 20,
             codex_home: Some(codex_home.clone()),
             dry_run: false,
+            purge_history: false,
             times: Some(2),
             prompt: Some("restore exactly".to_owned()),
         });
@@ -641,5 +765,21 @@ mod tests {
         assert!(captured_args[4].contains("compare the current result against the original request"));
         let error = result.expect_err("non-zero round summary should error");
         assert!(error.to_string().contains("Completed 2 rounds"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_uninstall_script_waits_on_process_instead_of_fixed_ping_delay() {
+        let script = build_windows_uninstall_script(
+            42,
+            Path::new(r"C:\Users\demo\AppData\Local\Programs\codex-resume-loop"),
+            Some(Path::new(r"C:\Users\demo\AppData\Roaming\shcem\crl-desktop\config")),
+        );
+
+        assert!(script.contains("$pidToWait = 42"));
+        assert!(script.contains("Wait-Process -Id $pidToWait"));
+        assert!(script.contains("Start-Sleep -Milliseconds 100"));
+        assert!(script.contains(r"AppData\Roaming\shcem\crl-desktop\config"));
+        assert!(!script.contains("ping 127.0.0.1"));
     }
 }

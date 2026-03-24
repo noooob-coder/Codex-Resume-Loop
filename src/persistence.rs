@@ -21,6 +21,12 @@ fn config_path() -> Result<PathBuf> {
     Ok(config_dir.join("state.json"))
 }
 
+pub fn config_dir_path() -> Result<PathBuf> {
+    let project_dirs =
+        ProjectDirs::from("dev", "shcem", "crl-desktop").context("无法定位应用配置目录")?;
+    Ok(project_dirs.config_dir().to_path_buf())
+}
+
 pub fn load_state() -> Result<StoredAppState> {
     let path = config_path()?;
     load_state_from(&path)
