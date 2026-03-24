@@ -1,1 +1,4 @@
 git.txt
+dist/
+dist-target*/
+target/
