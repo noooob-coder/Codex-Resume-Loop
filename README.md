@@ -16,7 +16,7 @@ CRL 用来管理 Codex 多工作区任务。
 
 构建或打包依赖：
 
-- Windows 安装包：当前仓库内置 `IExpress` 打包脚本
+- Windows 安装包：Inno Setup 6
 - Linux CLI 打包：`zig`、`cargo-zigbuild`
 - iOS 构建：macOS、Xcode、`xcrun`、Apple SDK
 

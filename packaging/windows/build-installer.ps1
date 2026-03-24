@@ -14,8 +14,8 @@ $distDir = Join-Path $RepoRoot "dist"
 $buildDir = Join-Path $RepoRoot "dist-target"
 $stageDir = Join-Path $buildDir "windows-installer-stage"
 $releaseDir = Join-Path $RepoRoot "target\release"
-$installerVersioned = Join-Path $distDir "crl-setup-windows-x64-$version.exe"
-$installerStable = Join-Path $distDir "crl-setup-windows-x64.exe"
+$issPath = Join-Path $PSScriptRoot "crl.iss"
+$isccPath = "C:\Users\shcem\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 if (Test-Path $stageDir) {
@@ -33,75 +33,18 @@ try {
 Copy-Item (Join-Path $releaseDir "crl-desktop.exe") (Join-Path $stageDir "crl-desktop.exe") -Force
 Copy-Item (Join-Path $releaseDir "crl.exe") (Join-Path $stageDir "crl.exe") -Force
 Copy-Item (Join-Path $RepoRoot "README.md") (Join-Path $stageDir "README.txt") -Force
-Copy-Item (Join-Path $PSScriptRoot "install.ps1") (Join-Path $stageDir "install.ps1") -Force
+Copy-Item (Join-Path $RepoRoot "ui\assets\crl-icon.ico") (Join-Path $stageDir "crl-icon.ico") -Force
 
-$installCmd = @"
-@echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
-exit /b %ERRORLEVEL%
-"@
-Set-Content -Path (Join-Path $stageDir "install.cmd") -Value $installCmd -Encoding Ascii
+$env:CRL_VERSION = $version
+$env:CRL_OUTPUT_DIR = $distDir
+$env:CRL_STAGE_DIR = $stageDir
 
-$sed = @"
-[Version]
-Class=IEXPRESS
-SEDVersion=3
-[Options]
-PackagePurpose=InstallApp
-ShowInstallProgramWindow=1
-HideExtractAnimation=1
-UseLongFileName=1
-InsideCompressed=0
-CAB_FixedSize=0
-CAB_ResvCodeSigning=0
-RebootMode=N
-InstallPrompt=%InstallPrompt%
-DisplayLicense=%DisplayLicense%
-FinishMessage=%FinishMessage%
-TargetName=%TargetName%
-FriendlyName=%FriendlyName%
-AppLaunched=%AppLaunched%
-PostInstallCmd=%PostInstallCmd%
-AdminQuietInstCmd=%AdminQuietInstCmd%
-UserQuietInstCmd=%UserQuietInstCmd%
-SourceFiles=SourceFiles
-[Strings]
-InstallPrompt=
-DisplayLicense=
-FinishMessage=CRL installation completed.
-TargetName=$installerVersioned
-FriendlyName=CRL Setup
-AppLaunched=cmd.exe /d /s /c ""install.cmd""
-PostInstallCmd=<None>
-AdminQuietInstCmd=cmd.exe /d /s /c ""install.cmd""
-UserQuietInstCmd=cmd.exe /d /s /c ""install.cmd""
-FILE0=install.cmd
-FILE1=install.ps1
-FILE2=crl-desktop.exe
-FILE3=crl.exe
-FILE4=README.txt
-[SourceFiles]
-SourceFiles0=$stageDir
-[SourceFiles0]
-%FILE0%=
-%FILE1%=
-%FILE2%=
-%FILE3%=
-%FILE4%=
-"@
+& $isccPath $issPath
 
-$sedPath = Join-Path $stageDir "crl-installer.sed"
-Set-Content -Path $sedPath -Value $sed -Encoding Ascii
-
-& "$env:WINDIR\System32\iexpress.exe" /N /Q /M $sedPath
-for ($attempt = 0; $attempt -lt 50 -and -not (Test-Path $installerVersioned); $attempt++) {
-    Start-Sleep -Milliseconds 200
-}
+$installerVersioned = Join-Path $distDir "crl-setup-windows-x64-$version.exe"
 if (-not (Test-Path $installerVersioned)) {
-    throw "IExpress did not create the expected installer: $installerVersioned"
+    throw "Inno Setup did not create the expected installer: $installerVersioned"
 }
-Copy-Item $installerVersioned $installerStable -Force
 
 Write-Host "Windows installer created:"
 Write-Host "  $installerVersioned"
-Write-Host "  $installerStable"
