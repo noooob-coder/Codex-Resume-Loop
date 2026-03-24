@@ -5,43 +5,33 @@ CRL 用来管理 Codex 多工作区任务。
 - Windows：桌面 UI + CLI
 - Linux：CLI
 
-核心目标只有一个：
-安装完成后，直接输入 `crl` 就能用。
+安装完成后的目标很简单：直接输入 `crl` 就能开始使用。
 
-## 依赖
-
-运行依赖：
+## 运行依赖
 
 - `codex` 已安装并且在 PATH 中可执行
 - 能访问 `~/.codex`
 - Windows 桌面端建议安装 WebView2 Runtime
 
-构建或打包依赖：
-
-- Windows 安装包：Inno Setup 6
-- Linux CLI 打包：`zig`、`cargo-zigbuild`
-
 ## 下载地址
 
-- 仓库首页：`https://github.com/noooob-coder/Codex-Resume-Loop`
-- Release 页面：`https://github.com/noooob-coder/Codex-Resume-Loop/releases/tag/v0.1.0`
+- [仓库首页](https://github.com/noooob-coder/Codex-Resume-Loop)
+- [Release 页面](https://github.com/noooob-coder/Codex-Resume-Loop/releases/tag/v0.1.0)
 
 ## 当前发布物
 
 - Windows 安装包：`crl-setup-windows-x64-0.1.0.exe`
 - Linux CLI：`crl-cli-linux-x86_64.tar.gz`
 
-## Windows 安装与使用
+## Windows 安装
 
-### 安装步骤
-
-1. 打开 Release 页面。
+1. 打开 [Release 页面](https://github.com/noooob-coder/Codex-Resume-Loop/releases/tag/v0.1.0)。
 2. 下载 `crl-setup-windows-x64-0.1.0.exe`。
 3. 运行安装包。
 4. 安装时保持“添加 CRL CLI 到 PATH”选项开启。
 5. 安装完成后，关闭当前终端，再打开一个新的终端窗口。
 
-### 命令行下载并启动安装包
+命令行下载并启动安装包：
 
 ```powershell
 $installer = "$env:TEMP\\crl-setup-windows-x64-0.1.0.exe"
@@ -51,9 +41,7 @@ Invoke-WebRequest `
 Start-Process $installer
 ```
 
-### 安装后怎么验证
-
-先只做最简单的验证：
+安装生效验证：
 
 ```powershell
 crl
@@ -61,15 +49,13 @@ crl
 
 如果终端已经能直接识别 `crl`，说明安装和 PATH 已经生效。
 
-需要看帮助时再执行：
+帮助输出查看：
 
 ```powershell
 crl --help
 ```
 
-### Windows 上最常见的用法
-
-直接进入当前项目目录后输入：
+Windows 上最常见的使用方式是进入目标项目目录后直接输入：
 
 ```powershell
 crl
@@ -77,9 +63,16 @@ crl
 
 这会进入交互式选择和执行流程，是最推荐的入门方式。
 
-## Linux 安装与使用
+桌面端启动入口：
 
-### 一条命令安装
+- 开始菜单里的 `CRL Desktop`
+- 安装目录里的 `crl-desktop.exe`
+
+## Linux 安装
+
+Linux 版本是 CLI-only，但安装完成后同样直接使用 `crl`。
+
+一条命令安装：
 
 ```bash
 tmpdir="$(mktemp -d)" && \
@@ -88,7 +81,7 @@ chmod +x "$tmpdir/install.sh" && \
 "$tmpdir/install.sh"
 ```
 
-### 安装后怎么验证
+安装生效验证：
 
 ```bash
 crl
@@ -96,21 +89,19 @@ crl
 
 如果 shell 已经能直接找到 `crl`，说明安装成功。
 
-需要看帮助时再执行：
+帮助输出查看：
 
 ```bash
 crl --help
 ```
 
-### Linux 上最常见的用法
-
-进入你的项目目录后直接执行：
+Linux 上最常见的使用方式是进入目标项目目录后直接执行：
 
 ```bash
 crl
 ```
 
-## 桌面端怎么用
+## 桌面端使用流程
 
 Windows 桌面端分三栏：
 
@@ -129,17 +120,17 @@ Windows 桌面端分三栏：
 7. 点击启动
 8. 右侧实时观察输出
 
-## CLI 怎么用
+## CLI 使用流程
 
-最简单的方式就是：
+最简单的入口是：
 
 ```bash
 crl
 ```
 
-推荐先记住这一条。
+推荐先记住这一条。只有在已经熟悉流程之后，再使用更具体的参数。
 
-只有在你已经熟悉流程之后，再考虑这些进阶命令：
+进阶命令：
 
 列出当前目录可恢复的会话：
 
@@ -163,7 +154,7 @@ crl --dry-run 3 "继续上一次结束的位置，完成未完成的工作。"
 
 这是 CRL 最核心的行为。
 
-### 1. 重复的本质
+重复的本质：
 
 CRL 不是每轮都新建一个全新任务，而是反复恢复同一个 Codex 会话。
 
@@ -173,13 +164,13 @@ CRL 不是每轮都新建一个全新任务，而是反复恢复同一个 Codex 
 codex exec resume --skip-git-repo-check <session_id> <wrapped_prompt>
 ```
 
-也就是说，重复机制的重点不是“重复执行命令”本身，而是：
+重复机制的关键不是“重复执行命令”本身，而是：
 
 - 同一个目标会话
 - 同一个提示词目标
 - 多轮持续恢复
 
-### 2. 哪三个字段决定重复行为
+决定重复行为的三个输入：
 
 - `目标对话`
   说明：恢复哪个 Codex 会话
@@ -188,64 +179,52 @@ codex exec resume --skip-git-repo-check <session_id> <wrapped_prompt>
 - `提示词`
   说明：每一轮继续发给同一个会话的任务要求
 
-例如：
+例子：
 
 - 目标会话：`session-a`
 - 执行轮次：`3`
 - 提示词：`继续上一次结束的位置，完成未完成的工作。`
 
-那就表示对同一个 `session-a` 连续恢复 3 轮。
+这表示对同一个 `session-a` 连续恢复 3 轮。
 
-### 3. CLI 里的重复
-
-CLI 里最简单的入口是：
+CLI 里的重复入口：
 
 ```bash
 crl
 ```
 
-如果你需要明确轮次，才写成：
+如果需要明确轮次，再写成：
 
 ```bash
 crl 3 "继续上一次结束的位置，完成未完成的工作。"
 ```
 
-这里的 `3` 就是重复轮次。
+提示词包装行为：
 
-### 4. 提示词不会被原样裸发
-
-CRL 会把你的原始提示词包装成一个更严格的恢复提示。
-
-包装后的要求包括：
+CRL 会把原始提示词包装成一个更严格的恢复提示。包装后的要求包括：
 
 - 从上一次停止的位置继续
 - 不要再问“要不要继续”
 - 完成后自己检查有没有遗漏
 - 只有遇到真实阻塞才允许提前停
 
-所以重复机制不是简单 for-loop，而是“带执行约束的会话恢复循环”。
+所以重复机制不是简单循环，而是“带执行约束的会话恢复循环”。
 
-### 5. 默认轮次
+默认轮次：
 
-当前默认轮次是 `1`。
+- 当前默认轮次是 `1`
 
-如果你不主动把轮次调大，CRL 默认只恢复一轮。
-
-### 6. 某一轮失败时会发生什么
-
-当前行为不是“第一轮失败就全部停止”，而是：
+失败轮次处理：
 
 1. 记录失败轮次和退出码
 2. 继续尝试后面的轮次
 3. 全部轮次结束后统一汇总失败情况
 
-所以它更偏向“把计划轮次尽量跑完”。
+这意味着它更偏向“把计划轮次尽量跑完”。
 
-### 7. 为什么实时输出重要
+实时输出的作用：
 
-命令输出现在是实时流式显示。
-
-这对重复机制很重要，因为你能立刻知道：
+命令输出现在是实时流式显示。这样你可以立刻知道：
 
 - 当前轮有没有开始
 - Codex 有没有开始输出
