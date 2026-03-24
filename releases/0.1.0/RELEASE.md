@@ -10,8 +10,6 @@
 ## Artifacts
 
 - Windows installer: `releases/0.1.0/windows/crl-setup-windows-x64-0.1.0.exe`
-- Windows desktop binary: `releases/0.1.0/windows/crl-desktop-windows-x64-0.1.0.exe`
-- Windows CLI binary: `releases/0.1.0/windows/crl-cli-windows-x64-0.1.0.exe`
 - Linux CLI archive: `releases/0.1.0/linux/crl-cli-linux-x86_64.tar.gz`
 - iOS build kit: `releases/0.1.0/ios/crl-ios-ui-and-cli-build-kit.tar.gz`
 
