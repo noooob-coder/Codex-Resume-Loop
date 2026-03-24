@@ -1,4 +1,4 @@
-#define MyAppName "CRL"
+#define MyAppName "Codex-Resume-Loop"
 #define MyAppVersion GetEnv("CRL_VERSION")
 #define MyAppPublisher "noooob-coder"
 #define MyAppURL "https://github.com/noooob-coder/Codex-Resume-Loop"
@@ -33,8 +33,8 @@ PrivilegesRequired=lowest
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加任务："; Flags: unchecked
-Name: "addtopath"; Description: "将 CRL CLI 添加到 PATH"; GroupDescription: "附加任务："; Flags: checkedonce
+Name: "desktopicon"; Description: "Create desktop shortcut"; GroupDescription: "Additional tasks:"; Flags: unchecked
+Name: "addtopath"; Description: "Add Codex-Resume-Loop CLI to PATH"; GroupDescription: "Additional tasks:"; Flags: checkedonce
 
 [Files]
 Source: "{#MySourceDir}\crl-desktop.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -42,15 +42,16 @@ Source: "{#MySourceDir}\crl.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MySourceDir}\README.txt"; DestDir: "{app}"; DestName: "README.txt"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\CRL Desktop"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Codex-Resume-Loop Desktop"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\README"; Filename: "{app}\README.txt"
-Name: "{autodesktop}\CRL Desktop"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\Uninstall Codex-Resume-Loop"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\Codex-Resume-Loop Desktop"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Check: NeedsAddPath(ExpandConstant('{app}')); Tasks: addtopath; Flags: preservestringtype
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "启动 CRL Desktop"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch Codex-Resume-Loop Desktop"; Flags: nowait postinstall skipifsilent
 
 [Code]
 function NeedsAddPath(Param: string): boolean;
