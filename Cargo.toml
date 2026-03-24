@@ -1,0 +1,44 @@
+[package]
+name = "crl-desktop"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop monitor for Codex resume loops across multiple workspaces"
+
+[features]
+default = ["desktop-ui"]
+desktop-ui = ["dep:rfd", "dep:slint"]
+
+[lib]
+name = "crl_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "crl-desktop"
+path = "src/main.rs"
+
+[[bin]]
+name = "crl"
+path = "src/bin/crl.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+clap = { version = "4.5", features = ["derive"] }
+crossbeam-channel = "0.5"
+directories = "6.0"
+dunce = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rfd = { version = "0.15", optional = true }
+slint = { version = "1.15.1", optional = true }
+walkdir = "2.5"
+
+[build-dependencies]
+slint-build = "1.15.1"
+winresource = "0.1"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

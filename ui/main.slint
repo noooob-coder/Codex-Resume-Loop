@@ -1,0 +1,767 @@
+import {
+    Button,
+    CheckBox,
+    ComboBox,
+    LineEdit,
+    ListView,
+    ScrollView,
+    TextEdit,
+} from "std-widgets.slint";
+
+export struct WorkspaceRow {
+    id: int,
+    name: string,
+    path: string,
+    status: string,
+    sessions: string,
+    rounds: string,
+}
+
+export struct SessionRow {
+    id: string,
+    title: string,
+    subtitle: string,
+}
+
+component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <color> fill-color: #8a552a;
+    in property <color> stroke-color: #6e411c;
+    in property <color> text-color: white;
+    callback clicked();
+
+    min-width: 100px;
+    min-height: 34px;
+    border-radius: 8px;
+    background: touch.pressed ? fill-color.darker(10%) : fill-color;
+    border-width: 1px;
+    border-color: stroke-color;
+
+    Text {
+        text: parent.label;
+        color: parent.text-color;
+        font-size: 13px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { parent.clicked(); }
+    }
+}
+
+component GhostButton inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+
+    min-width: 80px;
+    min-height: 34px;
+    border-radius: 8px;
+    background: touch.pressed ? #efe2d1 : (touch.has-hover ? #fff5eb : #fffaf5);
+    border-width: 1px;
+    border-color: #d8c1a2;
+
+    Text {
+        text: parent.label;
+        color: #5f4a39;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { parent.clicked(); }
+    }
+}
+
+component StatusBadge inherits Rectangle {
+    in property <string> label;
+    in property <color> fill-color: #f5ece0;
+    in property <color> stroke-color: #d8c1a2;
+    in property <color> text-color: #8a552a;
+
+    min-width: 80px;
+    min-height: 28px;
+    border-radius: 6px;
+    background: fill-color;
+    border-width: 1px;
+    border-color: stroke-color;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 12px;
+        spacing: 8px;
+        alignment: center;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.text-color;
+            }
+        }
+
+        Text {
+            text: label;
+            color: text-color;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component SplitHandle inherits Rectangle {
+    callback dragged(length);
+
+    width: 6px;
+    background: transparent;
+    
+    Rectangle {
+        width: 2px;
+        height: 60px;
+        border-radius: 1px;
+        background: touch.pressed ? #8a552a : (touch.has-hover ? #d8c1a2 : #efe3d2);
+        x: parent.width / 2 - self.width / 2;
+        y: parent.height / 2 - self.height / 2;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: ew-resize;
+        moved => {
+            if (self.pressed) {
+                parent.dragged(self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "CRL 多工作区指挥台";
+    icon: @image-url("assets/crl-icon.svg");
+    preferred-width: 1480px;
+    preferred-height: 920px;
+    min-width: 1260px;
+    min-height: 760px;
+    background: #f6efe5;
+
+    in-out property <string> codex_home;
+    in-out property <string> add_path;
+    in-out property <string> filter_text;
+    in-out property <bool> auto_refresh_enabled;
+    in-out property <string> auto_refresh_seconds;
+    in property <bool> tick_enabled: true;
+    in property <int> tick_interval_ms: 500;
+
+    in property <string> codex_status;
+    in property <bool> codex_is_ready;
+    in property <string> notice;
+    in property <[WorkspaceRow]> workspace_rows;
+    in property <int> selected_workspace_index;
+    in property <bool> has_selected_workspace;
+    in property <bool> selected_running;
+    in property <string> selected_workspace_name;
+    in property <string> selected_workspace_path;
+    in property <string> selected_status;
+    in property <string> selected_detail;
+    in-out property <string> selected_label;
+    in-out property <string> selected_rounds;
+    in-out property <string> selected_prompt;
+    in property <[string]> workspace_options;
+    in property <[SessionRow]> session_rows;
+    in property <int> selected_session_index;
+    in property <[string]> session_options;
+    in property <string> terminal_output;
+
+    private property <color> selected_status_fill: 
+        root.selected_status == "已完成" ? #eef5ea : (
+            root.selected_status == "异常" ? #f9ebec : (
+                root.selected_status == "待命" ? #f5ece0 : (
+                    root.selected_status == "无会话" ? #f5ece0 : (
+                        root.selected_status == "已停止" ? #f1f1f1 : #e6f1f7
+                    )
+                )
+            )
+        );
+    private property <color> selected_status_text: 
+        root.selected_status == "已完成" ? #49623b : (
+            root.selected_status == "异常" ? #9d3d30 : (
+                root.selected_status == "待命" ? #8a552a : (
+                    root.selected_status == "无会话" ? #8a552a : (
+                        root.selected_status == "已停止" ? #666666 : #2c5282
+                    )
+                )
+            )
+        );
+
+    callback tick();
+    callback browse_codex_home();
+    callback codex_home_edited(string);
+    callback add_path_edited(string);
+    callback add_workspace();
+    callback browse_workspace();
+    callback filter_edited(string);
+    callback auto_refresh_toggled(bool);
+    callback auto_refresh_seconds_edited(string);
+    callback select_workspace(int);
+    callback start_selected();
+    callback stop_selected();
+    callback refresh_selected();
+    callback open_selected_folder();
+    callback selected_label_edited(string);
+    callback selected_rounds_edited(string);
+    callback select_session(int);
+    callback selected_prompt_edited(string);
+    callback clear_logs();
+
+    private property <length> panel-gap: 12px;
+    private property <length> splitter-width: 6px;
+    private property <length> left-panel-width: 320px;
+    private property <length> right-panel-width: 420px;
+    private property <length> middle-panel-min-width: 520px;
+
+    Timer {
+        interval: root.tick_interval_ms * 1ms;
+        running: root.tick_enabled;
+        triggered => { root.tick(); }
+    }
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        Rectangle {
+            border-radius: 12px;
+            background: #fffaf5;
+            border-color: #d8c1a2;
+            border-width: 1px;
+            min-height: 100px;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: 16px;
+
+                    VerticalLayout {
+                        spacing: 0px;
+                        Text {
+                            text: "CRL 指挥台";
+                            color: #2b231c;
+                            font-size: 20px;
+                            font-weight: 800;
+                        }
+                        Text {
+                            text: "多项目 Codex 监控与自动化任务管理";
+                            color: #6c5c4b;
+                            font-size: 12px;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+
+                    StatusBadge {
+                        label: root.codex_status;
+                        fill-color: root.codex_is_ready ? #eef5ea : #f9ebec;
+                        text-color: root.codex_is_ready ? #49623b : #9d3d30;
+                        stroke-color: (root.codex_is_ready ? #49623b : #9d3d30).with-alpha(0.3);
+                    }
+
+                    Rectangle { width: 4px; background: transparent; }
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            spacing: 2px;
+                            alignment: center;
+                            Text { text: "自动刷新"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                CheckBox {
+                                    checked: root.auto_refresh_enabled;
+                                    toggled => { root.auto_refresh_toggled(self.checked); }
+                                }
+                                LineEdit {
+                                    text <=> root.auto_refresh_seconds;
+                                    edited(text) => { root.auto_refresh_seconds_edited(text); }
+                                    width: 40px;
+                                    font-size: 12px;
+                                }
+                                Text { text: "s"; color: #6c5c4b; font-size: 11px; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        horizontal-stretch: 1;
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "Codex 目录"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                LineEdit {
+                                    text <=> root.codex_home;
+                                    font-size: 12px;
+                                    edited(text) => { root.codex_home_edited(text); }
+                                }
+                                GhostButton {
+                                    label: "浏览";
+                                    min-width: 50px;
+                                    min-height: 28px;
+                                    clicked => { root.browse_codex_home(); }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        horizontal-stretch: 1;
+                        VerticalLayout {
+                            spacing: 2px;
+                            Text { text: "添加项目"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                LineEdit {
+                                    text <=> root.add_path;
+                                    font-size: 12px;
+                                    edited(text) => { root.add_path_edited(text); }
+                                }
+                                ActionButton {
+                                    label: "添加";
+                                    min-width: 50px;
+                                    min-height: 28px;
+                                    clicked => { root.add_workspace(); }
+                                }
+                                GhostButton {
+                                    label: "浏览";
+                                    min-width: 50px;
+                                    min-height: 28px;
+                                    clicked => { root.browse_workspace(); }
+                                }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        width: 140px;
+                        Text { text: "名称筛选"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                        LineEdit {
+                            text <=> root.filter_text;
+                            font-size: 12px;
+                            edited(text) => { root.filter_edited(text); }
+                        }
+                    }
+                }
+
+                if root.notice != "" : Text {
+                    text: root.notice;
+                    color: #8b5d2d;
+                    font-size: 11px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        content-host := Rectangle {
+            horizontal-stretch: 1;
+            vertical-stretch: 1;
+            background: transparent;
+
+            private property <length> max-left-width: content-host.width - root.right-panel-width - root.middle-panel-min-width - root.panel-gap * 4 - root.splitter-width * 2;
+            private property <length> left-effective-width: max(240px, min(root.left-panel-width, max-left-width));
+            private property <length> max-right-width: content-host.width - left-effective-width - root.middle-panel-min-width - root.panel-gap * 4 - root.splitter-width * 2;
+            private property <length> right-effective-width: max(320px, min(root.right-panel-width, max-right-width));
+            private property <length> middle-x: left-effective-width + root.panel-gap + root.splitter-width + root.panel-gap;
+            private property <length> middle-width: content-host.width - left-effective-width - right-effective-width - root.panel-gap * 4 - root.splitter-width * 2;
+            private property <length> right-x: middle-x + middle-width + root.panel-gap + root.splitter-width + root.panel-gap;
+
+            Rectangle {
+                x: 0px;
+                y: 0px;
+                width: content-host.left-effective-width;
+                height: parent.height;
+                clip: true;
+                border-radius: 12px;
+                background: #fffaf5;
+                border-color: #d8c1a2;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+                    
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "切换工作区";
+                            color: #2b231c;
+                            font-size: 16px;
+                            font-weight: 800;
+                        }
+                        ComboBox {
+                            model: root.workspace_options;
+                            current-index: root.selected_workspace_index;
+                            selected(value) => { root.select_workspace(self.current-index); }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: #efe3d2;
+                    }
+
+                    Text {
+                        text: "工作区列表";
+                        color: #6c5c4b;
+                        font-size: 11px;
+                        font-weight: 700;
+                    }
+
+                    ListView {
+                        height: parent.height - 100px;
+                        for workspace[index] in root.workspace_rows : Rectangle {
+                            min-height: 64px;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: root.selected_workspace_index == index ? #8a552a : #e5d1b8;
+                            background: root.selected_workspace_index == index ? #f6eadb : #fffdf9;
+
+                            VerticalLayout {
+                                padding: 8px;
+                                spacing: 2px;
+                                Text {
+                                    text: workspace.name;
+                                    color: #2b231c;
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: workspace.status; color: #8a552a; font-size: 10px; font-weight: 700; }
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                                    Text { text: workspace.sessions + " 会话"; color: #6c5c4b; font-size: 10px; }
+                                }
+                            }
+
+                            TouchArea { clicked => { root.select_workspace(index); } }
+                        }
+                    }
+                }
+            }
+
+            SplitHandle {
+                x: content-host.left-effective-width + root.panel-gap;
+                y: 0px;
+                height: parent.height;
+                dragged(delta) => {
+                    root.left-panel-width = max(
+                        240px,
+                        min(root.left-panel-width + delta, content-host.max-left-width)
+                    );
+                }
+            }
+
+            Rectangle {
+                x: content-host.middle-x;
+                y: 0px;
+                width: content-host.middle-width;
+                height: parent.height;
+                clip: true;
+                border-radius: 12px;
+                background: #fffaf5;
+                border-color: #d8c1a2;
+                border-width: 1px;
+
+                if root.has_selected_workspace : VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 2px;
+                            Text {
+                                text: root.selected_workspace_name;
+                                color: #2b231c;
+                                font-size: 22px;
+                                font-weight: 800;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: root.selected_workspace_path;
+                                color: #6c5c4b;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                        StatusBadge {
+                            label: root.selected_status;
+                            fill-color: root.selected_status_fill;
+                            text-color: root.selected_status_text;
+                            stroke-color: root.selected_status_text.with-alpha(0.3);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        if root.selected_running : ActionButton {
+                            label: "停止任务";
+                            fill-color: #9d3d30;
+                            stroke-color: #7e2f25;
+                            clicked => { root.stop_selected(); }
+                        }
+                        if !root.selected_running : ActionButton {
+                            label: "启动任务";
+                            fill-color: #8a552a;
+                            stroke-color: #6e411c;
+                            clicked => { root.start_selected(); }
+                        }
+                        GhostButton { label: "刷新会话"; clicked => { root.refresh_selected(); } }
+                        GhostButton { label: "打开目录"; clicked => { root.open_selected_folder(); } }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: #efe3d2;
+                    }
+
+                    ScrollView {
+                        viewport-width: self.width;
+                        mouse-drag-pan-enabled: false;
+
+                        VerticalLayout {
+                            width: parent.width;
+                            horizontal-stretch: 1;
+                            spacing: 12px;
+                            padding-right: 16px;
+
+                                Rectangle {
+                                    border-radius: 10px;
+                                    border-width: 1px;
+                                    border-color: #e8d8c4;
+                                    background: #fcf7f1;
+
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 10px;
+
+                                        VerticalLayout {
+                                            spacing: 2px;
+                                            Text { text: "任务控制"; color: #2b231c; font-size: 15px; font-weight: 800; }
+                                            Text { text: "设置显示名称和执行轮次。"; color: #7a6753; font-size: 11px; wrap: word-wrap; }
+                                        }
+
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                spacing: 3px;
+                                                Text { text: "显示名称"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                                                LineEdit {
+                                                    text <=> root.selected_label;
+                                                    font-size: 13px;
+                                                    edited(text) => { root.selected_label_edited(text); }
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                width: 92px;
+                                                spacing: 3px;
+                                                Text { text: "执行轮次"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                                                LineEdit {
+                                                    text <=> root.selected_rounds;
+                                                    font-size: 13px;
+                                                    edited(text) => { root.selected_rounds_edited(text); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    border-radius: 10px;
+                                    border-width: 1px;
+                                    border-color: #e8d8c4;
+                                    background: #fcf7f1;
+
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 10px;
+
+                                        VerticalLayout {
+                                            spacing: 2px;
+                                            Text { text: "目标对话"; color: #2b231c; font-size: 15px; font-weight: 800; }
+                                            Text { text: "选择当前工作区要继续的 Codex 对话。"; color: #7a6753; font-size: 11px; wrap: word-wrap; }
+                                        }
+
+                                        ComboBox {
+                                            model: root.session_options;
+                                            current-index: root.selected_session_index;
+                                            selected(value) => { root.select_session(self.current-index); }
+                                        }
+
+                                        if root.selected_session_index >= 0 : Rectangle {
+                                            border-radius: 8px;
+                                            border-width: 1px;
+                                            border-color: #efe3d2;
+                                            background: #fffdf9;
+
+                                            VerticalLayout {
+                                                padding: 10px;
+                                                spacing: 2px;
+                                                Text { text: root.session_rows[root.selected_session_index].title; color: #2b231c; font-size: 13px; font-weight: 700; wrap: word-wrap; }
+                                                Text { text: root.session_rows[root.selected_session_index].subtitle; color: #6c5c4b; font-size: 11px; wrap: word-wrap; }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    border-radius: 10px;
+                                    border-width: 1px;
+                                    border-color: #e8d8c4;
+                                    background: #fcf7f1;
+
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 10px;
+
+                                        VerticalLayout {
+                                            spacing: 2px;
+                                            Text { text: "提示词"; color: #2b231c; font-size: 15px; font-weight: 800; }
+                                            Text { text: "每一轮都会把这段内容继续发送到目标对话。"; color: #7a6753; font-size: 11px; wrap: word-wrap; }
+                                        }
+
+                                        TextEdit {
+                                            text <=> root.selected_prompt;
+                                            edited(text) => { root.selected_prompt_edited(text); }
+                                            min-height: 220px;
+                                            wrap: word-wrap;
+                                            font-size: 13px;
+                                        }
+                                    }
+                                }
+
+                                if root.selected_detail != "" : Rectangle {
+                                    border-radius: 10px;
+                                    background: #fdf5eb;
+                                    border-width: 1px;
+                                    border-color: #f6eadb;
+
+                                    VerticalLayout {
+                                        padding: 12px;
+                                        spacing: 4px;
+                                        Text { text: "运行反馈"; color: #8b5d2d; font-size: 12px; font-weight: 800; }
+                                        Text { text: root.selected_detail; color: #8b5d2d; font-size: 11px; wrap: word-wrap; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                if !root.has_selected_workspace : Rectangle {
+                    background: transparent;
+                    VerticalLayout {
+                        padding: 28px;
+                        spacing: 8px;
+                        alignment: center;
+                        Text {
+                            text: "就绪，等待工作区";
+                            color: #2b231c;
+                            font-size: 24px;
+                            font-weight: 800;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "请在顶部添加项目文件夹，然后在左侧选择一个工作区。";
+                            color: #6c5c4b;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            SplitHandle {
+                x: content-host.middle-x + content-host.middle-width + root.panel-gap;
+                y: 0px;
+                height: parent.height;
+                dragged(delta) => {
+                    root.right-panel-width = max(
+                        320px,
+                        min(root.right-panel-width - delta, content-host.max-right-width)
+                    );
+                }
+            }
+
+            Rectangle {
+                x: content-host.right-x;
+                y: 0px;
+                width: content-host.right-effective-width;
+                height: parent.height;
+                clip: true;
+                border-radius: 12px;
+                background: #f8f1e7;
+                border-color: #dcc4a4;
+                border-width: 1px;
+
+                VerticalLayout {
+                    padding: 14px;
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "命令输出";
+                            color: #2b231c;
+                            font-size: 18px;
+                            font-weight: 800;
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        GhostButton { label: "清空"; clicked => { root.clear_logs(); } }
+                    }
+
+                    Rectangle {
+                        border-radius: 8px;
+                        background: #fffdf9;
+                        border-color: #e5d1b8;
+                        border-width: 1px;
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+
+                        TextEdit {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            text: root.terminal_output;
+                            read-only: true;
+                            wrap: word-wrap;
+                            font-size: 13px;
+                            font-family: "Cascadia Mono";
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
