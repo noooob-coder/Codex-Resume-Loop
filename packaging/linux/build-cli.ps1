@@ -25,6 +25,7 @@ New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
 Copy-Item (Join-Path $targetDir "$Target\release\crl") (Join-Path $stageDir "crl") -Force
 Copy-Item (Join-Path $RepoRoot "README.md") (Join-Path $stageDir "README.md") -Force
+Copy-Item (Join-Path $PSScriptRoot "install.sh") (Join-Path $stageDir "install.sh") -Force
 
 $python = @"
 import pathlib
@@ -33,7 +34,7 @@ import tarfile
 stage = pathlib.Path(r"$stageDir")
 archive = pathlib.Path(r"$archivePath")
 with tarfile.open(archive, "w:gz") as tar:
-    for name, mode in [("crl", 0o755), ("README.md", 0o644)]:
+    for name, mode in [("crl", 0o755), ("install.sh", 0o755), ("README.md", 0o644)]:
         path = stage / name
         info = tar.gettarinfo(str(path), arcname=name)
         info.mode = mode

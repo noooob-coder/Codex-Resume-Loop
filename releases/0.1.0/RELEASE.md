@@ -17,5 +17,6 @@
 
 ## Notes
 
-- Linux release is CLI-only by design.
+- Windows installer adds `crl` to PATH, so the CLI can be called directly after installation.
+- Linux release is CLI-only by design. Extract the archive and run `install.sh`, then call `crl` directly.
 - iOS release is provided as a build kit because final iOS binaries require macOS, Xcode, `xcrun`, and the Apple SDK for linking.

@@ -1,48 +1,71 @@
 # CRL
 
-CRL 是一个用于管理 Codex 多工作区任务的工具。
+CRL 用来管理 Codex 多工作区任务。
 
-- Windows：支持桌面 UI 和 CLI
-- Linux：支持 CLI
-- iOS：提供 UI + CLI 构建脚本，需在 macOS + Xcode 上完成最终构建
+- Windows：桌面 UI + CLI
+- Linux：CLI
+- iOS：提供 UI + CLI 构建套件，需在 macOS + Xcode 上完成最终构建
 
 ## 依赖
 
 - `codex` 已安装并可执行
 - 可访问 `~/.codex`
 - Windows 桌面端建议安装 WebView2 Runtime
-- 交叉发布 Linux CLI 需要 `zig` 和 `cargo-zigbuild`
-- 构建 iOS 版本需要 macOS、Xcode、`xcrun`
+- Linux 交叉打包需要 `zig` 和 `cargo-zigbuild`
+- iOS 构建需要 macOS、Xcode、`xcrun`
 
-## 怎么用
+## 发布版怎么用
 
-桌面端：
+仓库地址：
+
+- `https://github.com/noooob-coder/Codex-Resume-Loop`
+- Releases 页面：`https://github.com/noooob-coder/Codex-Resume-Loop/releases`
+
+Windows：
+
+1. 下载 `crl-setup-windows-x64-0.1.0.exe`
+2. 运行安装包
+3. 安装完成后直接在终端输入：
 
 ```powershell
-cargo run --bin crl-desktop
+crl --help
 ```
 
-CLI：
+Linux：
 
-```powershell
-cargo run --bin crl -- --help
+1. 下载 `crl-cli-linux-x86_64.tar.gz`
+2. 解压
+3. 进入解压目录执行：
+
+```bash
+chmod +x install.sh
+./install.sh
+crl --help
 ```
+
+iOS：
+
+1. 下载 `crl-ios-ui-and-cli-build-kit.tar.gz`
+2. 在 macOS 上解压
+3. 运行 `packaging/ios/build-ui-and-cli.sh`
+
+## 日常使用
 
 列出当前目录可恢复的会话：
 
-```powershell
+```bash
 crl --list-sessions
 ```
 
 执行指定轮次：
 
-```powershell
+```bash
 crl 3 "继续上一次结束的位置，完成未完成的工作。"
 ```
 
-只看计划：
+只看计划，不真正执行：
 
-```powershell
+```bash
 crl --dry-run 3 "继续上一次结束的位置，完成未完成的工作。"
 ```
 
@@ -64,16 +87,3 @@ crl --dry-run 3 "继续上一次结束的位置，完成未完成的工作。"
 - `packaging/windows`：Windows 安装包脚本
 - `packaging/linux`：Linux CLI 打包脚本
 - `packaging/ios`：iOS 构建脚本和说明
-
-## 发布产物
-
-- Windows 安装包：`dist/crl-setup-windows-x64-0.1.0.exe`
-- Linux CLI：`dist/crl-cli-linux-x86_64.tar.gz`
-- iOS 构建套件：`dist/crl-ios-ui-and-cli-build-kit.tar.gz`
-
-## 开发检查
-
-```powershell
-cargo test
-cargo check
-```
