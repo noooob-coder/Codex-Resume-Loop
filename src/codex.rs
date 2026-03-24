@@ -124,9 +124,10 @@ pub fn default_codex_home() -> PathBuf {
 }
 
 pub fn build_resume_prompt(user_prompt: &str) -> String {
-    let trimmed = user_prompt.trim();
+    let trimmed = compact_inline_text(user_prompt);
+    let execution_contract = compact_inline_text(RESUME_EXECUTION_CONTRACT);
     format!(
-        "Continue from the exact previous stopping point and finish the unfinished work.\n\nOriginal request that must be preserved exactly:\n{trimmed}\n\n{RESUME_EXECUTION_CONTRACT}"
+        "Continue from the exact previous stopping point and finish the unfinished work. Original request that must be preserved exactly: {trimmed} {execution_contract}"
     )
 }
 
@@ -533,7 +534,7 @@ fn read_history_summaries(
 }
 
 fn single_line_preview(text: &str, max_len: usize) -> String {
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let compact = compact_inline_text(text);
     if compact.is_empty() {
         return "（没有记录到用户提示词）".to_owned();
     }
@@ -547,6 +548,10 @@ fn single_line_preview(text: &str, max_len: usize) -> String {
         .iter()
         .collect::<String>()
         + "..."
+}
+
+fn compact_inline_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn normalize_path(path: &Path) -> Result<String> {
@@ -642,6 +647,7 @@ mod tests {
         assert!(prompt.contains("restore exactly"));
         assert!(prompt.contains("Do not ask the user whether to continue"));
         assert!(prompt.contains("compare the current result against the original request"));
+        assert!(!prompt.contains('\n'));
     }
 
     #[test]

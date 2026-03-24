@@ -570,7 +570,7 @@ mod tests {
         .expect("write codex cmd");
         std::fs::write(
             bin_dir.join("mock-codex.ps1"),
-            "$counterPath = Join-Path $PSScriptRoot 'count.txt'\r\n$count = 0\r\nif (Test-Path $counterPath) { $count = [int](Get-Content $counterPath) }\r\n$count++\r\nSet-Content -Path $counterPath -Value $count\r\nif ($count -eq 1) { exit 1 }\r\nexit 0\r\n",
+            "$counterPath = Join-Path $PSScriptRoot 'count.txt'\r\n$argsPath = Join-Path $PSScriptRoot (\"args-\" + $PID + \".txt\")\r\n[System.IO.File]::WriteAllLines($argsPath, $args)\r\n$count = 0\r\nif (Test-Path $counterPath) { $count = [int](Get-Content $counterPath) }\r\n$count++\r\nSet-Content -Path $counterPath -Value $count\r\nif ($count -eq 1) { exit 1 }\r\nexit 0\r\n",
         )
         .expect("write mock codex");
 
@@ -606,8 +606,39 @@ mod tests {
             .trim()
             .parse::<u32>()
             .expect("count parse");
+        let args_file = std::fs::read_dir(&bin_dir)
+            .expect("read bin dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("args-") && name.ends_with(".txt"))
+                    .unwrap_or(false)
+                    && std::fs::metadata(path)
+                        .map(|meta| meta.len() > 0)
+                        .unwrap_or(false)
+            })
+            .max_by_key(|path| {
+                std::fs::metadata(path)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+            })
+            .expect("args file");
+        let captured_args = std::fs::read_to_string(args_file)
+            .expect("read args file")
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
 
         assert_eq!(count, 2);
+        assert_eq!(captured_args[0], "exec");
+        assert_eq!(captured_args[1], "resume");
+        assert_eq!(captured_args[2], "--skip-git-repo-check");
+        assert_eq!(captured_args[3], "session-1");
+        assert!(captured_args[4].contains("restore exactly"));
+        assert!(captured_args[4].contains("Do not ask the user whether to continue"));
+        assert!(captured_args[4].contains("compare the current result against the original request"));
         let error = result.expect_err("non-zero round summary should error");
         assert!(error.to_string().contains("Completed 2 rounds"));
     }
