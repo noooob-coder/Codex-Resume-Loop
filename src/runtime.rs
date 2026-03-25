@@ -110,6 +110,14 @@ pub fn spawn_new_session_runner(
 
 const NEW_SESSION_MAX_ATTEMPTS: u32 = 2;
 
+#[derive(Default)]
+struct CodexStdoutFilter {
+    pending_line: String,
+    keeping_line: bool,
+    suppress_next_line: bool,
+    suppress_next_numeric_line: bool,
+}
+
 fn run_workspace_loop(
     request: WorkspaceRunRequest,
     sender: Sender<RuntimeEvent>,
@@ -527,6 +535,149 @@ fn run_new_session(
     }
 }
 
+impl CodexStdoutFilter {
+    fn push(&mut self, chunk: &str) -> String {
+        let mut output = String::new();
+
+        for ch in chunk.chars() {
+            if self.keeping_line {
+                output.push(ch);
+                if ch == '\n' {
+                    self.keeping_line = false;
+                    self.pending_line.clear();
+                }
+                continue;
+            }
+
+            if ch == '\r' {
+                continue;
+            }
+
+            if ch == '\n' {
+                if !self.should_suppress_completed_line() {
+                    output.push_str(&self.pending_line);
+                    output.push('\n');
+                }
+                self.finish_line();
+                continue;
+            }
+
+            self.pending_line.push(ch);
+            if !self.should_hold_line() {
+                output.push_str(&self.pending_line);
+                self.pending_line.clear();
+                self.keeping_line = true;
+            }
+        }
+
+        output
+    }
+
+    fn finish(&mut self) -> String {
+        if self.keeping_line {
+            self.keeping_line = false;
+            self.pending_line.clear();
+            return String::new();
+        }
+
+        if self.pending_line.is_empty() {
+            return String::new();
+        }
+
+        if self.should_suppress_completed_line() {
+            self.finish_line();
+            return String::new();
+        }
+
+        let line = self.pending_line.clone();
+        self.finish_line();
+        line
+    }
+
+    fn should_hold_line(&self) -> bool {
+        if self.suppress_next_line || self.suppress_next_numeric_line {
+            return true;
+        }
+        is_possible_filtered_prefix(&self.pending_line)
+    }
+
+    fn should_suppress_completed_line(&mut self) -> bool {
+        let trimmed = self.pending_line.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+
+        if self.suppress_next_line {
+            self.suppress_next_line = false;
+            return true;
+        }
+        if self.suppress_next_numeric_line {
+            self.suppress_next_numeric_line = false;
+            return trimmed
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || ch == ',' || ch == ' ');
+        }
+
+        let lowered = trimmed.to_ascii_lowercase();
+        if lowered == "user" {
+            self.suppress_next_line = true;
+            return true;
+        }
+        if lowered == "codex" || lowered == "--------" || lowered == "tokens used" {
+            if lowered == "tokens used" {
+                self.suppress_next_numeric_line = true;
+            }
+            return true;
+        }
+
+        starts_with_filtered_prefix(&lowered)
+    }
+
+    fn finish_line(&mut self) {
+        self.pending_line.clear();
+        self.keeping_line = false;
+    }
+}
+
+fn starts_with_filtered_prefix(line: &str) -> bool {
+    [
+        "openai codex",
+        "workdir:",
+        "model:",
+        "provider:",
+        "approval:",
+        "sandbox:",
+        "reasoning effort:",
+        "reasoning summaries:",
+        "session id:",
+        "mcp startup:",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+}
+
+fn is_possible_filtered_prefix(line: &str) -> bool {
+    let lowered = line.to_ascii_lowercase();
+    [
+        "openai codex",
+        "workdir:",
+        "model:",
+        "provider:",
+        "approval:",
+        "sandbox:",
+        "reasoning effort:",
+        "reasoning summaries:",
+        "session id:",
+        "mcp startup:",
+        "user",
+        "codex",
+        "--------",
+        "tokens used",
+    ]
+    .iter()
+    .any(|prefix| prefix.starts_with(&lowered))
+}
+
 fn spawn_stream_reader<R>(
     reader: R,
     workspace_id: u64,
@@ -578,6 +729,7 @@ fn forward_stream_chunks<R>(
 {
     let mut buffer = [0_u8; 4096];
     let mut decoder = Utf8ChunkDecoder::default();
+    let mut stdout_filter = matches!(stream, LogStream::Stdout).then(CodexStdoutFilter::default);
 
     loop {
         let read = match reader.read(&mut buffer) {
@@ -586,7 +738,12 @@ fn forward_stream_chunks<R>(
             Err(_) => return,
         };
 
-        let chunk = decoder.push(&buffer[..read]);
+        let raw_chunk = decoder.push(&buffer[..read]);
+        let chunk = if let Some(filter) = stdout_filter.as_mut() {
+            filter.push(&raw_chunk)
+        } else {
+            raw_chunk
+        };
         if !chunk.is_empty() {
             if let Some(capture) = capture.as_ref()
                 && let Ok(mut transcript) = capture.lock()
@@ -601,7 +758,17 @@ fn forward_stream_chunks<R>(
         }
     }
 
-    let final_chunk = decoder.finish();
+    let raw_final_chunk = decoder.finish();
+    let final_chunk = if let Some(filter) = stdout_filter.as_mut() {
+        let mut combined = String::new();
+        if !raw_final_chunk.is_empty() {
+            combined.push_str(&filter.push(&raw_final_chunk));
+        }
+        combined.push_str(&filter.finish());
+        combined
+    } else {
+        raw_final_chunk
+    };
     if !final_chunk.is_empty() {
         if let Some(capture) = capture.as_ref()
             && let Ok(mut transcript) = capture.lock()
