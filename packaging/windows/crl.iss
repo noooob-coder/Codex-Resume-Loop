@@ -55,7 +55,7 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch Codex-Resume-Loop Deskto
 
 [Code]
 var
-  RemoveHistoryPage: TInputOptionWizardPage;
+  RemoveHistoryOnUninstall: Boolean;
 
 function NeedsAddPath(Param: string): boolean;
 var
@@ -66,25 +66,27 @@ begin
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
 end;
 
-procedure InitializeUninstallProgressForm();
+function InitializeUninstall(): Boolean;
 begin
-  RemoveHistoryPage := CreateInputOptionPage(
-    wpWelcome,
-    'Uninstall options',
-    'Choose whether to remove local Codex-Resume-Loop history',
-    'If you keep local history, installed binaries will be removed but your local state and logs will remain on this machine.',
-    True,
-    False
-  );
-  RemoveHistoryPage.Add('Also remove local state and history');
-  RemoveHistoryPage.Values[0] := False;
+  RemoveHistoryOnUninstall := False;
+  Result := True;
+
+  if UninstallSilent then
+    exit;
+
+  RemoveHistoryOnUninstall :=
+    MsgBox(
+      'Also remove local Codex-Resume-Loop state and history from this machine?',
+      mbConfirmation,
+      MB_YESNO or MB_DEFBUTTON2
+    ) = IDYES;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ConfigDir: string;
 begin
-  if (CurUninstallStep = usPostUninstall) and RemoveHistoryPage.Values[0] then
+  if (CurUninstallStep = usPostUninstall) and RemoveHistoryOnUninstall then
   begin
     ConfigDir := ExpandConstant('{userappdata}\shcem\crl-desktop\config');
     if DirExists(ConfigDir) then
