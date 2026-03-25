@@ -218,6 +218,7 @@ export component MainWindow inherits Window {
     callback selected_rounds_edited(string);
     callback select_session(int);
     callback selected_prompt_edited(string);
+    callback create_new_session();
     callback clear_logs();
 
     private property <length> panel-gap: 12px;
@@ -534,6 +535,7 @@ export component MainWindow inherits Window {
                             clicked => { root.start_selected(); }
                         }
                         GhostButton { label: "刷新会话"; clicked => { root.refresh_selected(); } }
+                        GhostButton { label: "新建对话"; clicked => { root.create_new_session(); } }
                         GhostButton { label: "打开目录"; clicked => { root.open_selected_folder(); } }
                         Rectangle { horizontal-stretch: 1; background: transparent; }
                     }

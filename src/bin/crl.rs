@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use crl_desktop::codex::{
     DEFAULT_RESUME_ROUNDS, build_resume_prompt, default_codex_home, discover_workspace_sessions,
-    resolve_resume_command,
+    resolve_new_session_command, resolve_resume_command,
 };
 use crl_desktop::model::SessionSummary;
 use crl_desktop::persistence::config_dir_path;
@@ -23,6 +23,8 @@ struct Cli {
     install: bool,
     #[arg(long, alias = "Uninstall")]
     uninstall: bool,
+    #[arg(long = "new", alias = "New", alias = "NewSession")]
+    new_session: bool,
     #[arg(long, alias = "SessionId")]
     session_id: Option<String>,
     #[arg(long, alias = "Latest")]
@@ -60,10 +62,28 @@ fn main() -> Result<()> {
     run_resume_loop(cli)
 }
 
+#[derive(Debug, Clone)]
+enum SessionTarget {
+    Existing(SessionSummary),
+    NewConversation,
+}
+
 fn run_resume_loop(cli: Cli) -> Result<()> {
     let workspace = env::current_dir().context("Unable to read current working directory")?;
+    validate_new_session_args(&cli)?;
+
+    let wizard_mode = cli.interactive
+        || (cli.times.is_none()
+            && cli.prompt.is_none()
+            && cli.session_id.is_none()
+            && !cli.latest
+            && !cli.new_session);
     let codex_home = cli.codex_home.unwrap_or_else(default_codex_home);
     let current_session = env::var("CODEX_THREAD_ID").ok();
+
+    if cli.new_session {
+        return run_new_session(&workspace, cli.prompt.as_deref());
+    }
 
     let all_sessions = discover_workspace_sessions(&codex_home, &workspace)?;
     let mut selectable_sessions = all_sessions
@@ -91,19 +111,28 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
                 "Only the current Codex session is available in this workspace. Re-run outside Codex or pass -AllowCurrentSession."
             );
         }
-        bail!("No resumable Codex sessions were found for the current workspace.");
+        if wizard_mode {
+            println!("No resumable Codex sessions were found for the current workspace.");
+            println!("Starting a new Codex conversation instead.");
+            return run_new_session(&workspace, None);
+        }
+        bail!(
+            "No resumable Codex sessions were found for the current workspace. Run `crl` interactively or `crl --new` to start a new conversation."
+        );
     }
 
     selectable_sessions.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
-    let wizard_mode = cli.interactive
-        || (cli.times.is_none() && cli.prompt.is_none() && cli.session_id.is_none() && !cli.latest);
-
     let session = if let Some(session_id) = cli.session_id.as_deref() {
-        find_session(&all_sessions, session_id)?
+        SessionTarget::Existing(find_session(&all_sessions, session_id)?)
     } else if cli.latest {
-        selectable_sessions[0].clone()
+        SessionTarget::Existing(selectable_sessions[0].clone())
     } else {
-        select_session(&selectable_sessions, cli.max_sessions, wizard_mode)?
+        select_session_target(&selectable_sessions, cli.max_sessions, wizard_mode)?
+    };
+
+    let session = match session {
+        SessionTarget::Existing(session) => session,
+        SessionTarget::NewConversation => return run_new_session(&workspace, None),
     };
 
     if let Some(current) = current_session.as_deref()
@@ -160,6 +189,45 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
     }
 
     println!("All rounds completed.");
+    Ok(())
+}
+
+fn validate_new_session_args(cli: &Cli) -> Result<()> {
+    if !cli.new_session {
+        return Ok(());
+    }
+
+    if cli.times.is_some() {
+        bail!("`crl --new` does not accept rounds. Start the conversation first, then run resume rounds later.");
+    }
+    if cli.session_id.is_some() || cli.latest {
+        bail!("`crl --new` cannot be combined with existing-session selectors.");
+    }
+    if cli.list_sessions {
+        bail!("`crl --new` cannot be combined with `--list-sessions`.");
+    }
+    if cli.dry_run {
+        bail!("`crl --new` cannot be combined with `--dry-run`.");
+    }
+
+    Ok(())
+}
+
+fn run_new_session(workspace: &Path, prompt: Option<&str>) -> Result<()> {
+    println!("Starting a new Codex conversation in:");
+    println!("  {}", workspace.display());
+    let mut command = resolve_new_session_command(prompt)
+        .context("Failed to build codex command for a new conversation")?;
+    let status = command
+        .current_dir(workspace)
+        .status()
+        .context("Failed to start a new Codex conversation")?;
+    if !status.success() {
+        bail!(
+            "The new Codex conversation exited with code {}.",
+            format_exit_code(status)
+        );
+    }
     Ok(())
 }
 
@@ -478,17 +546,13 @@ fn find_session(sessions: &[SessionSummary], session_id: &str) -> Result<Session
         .ok_or_else(|| anyhow!("Session not found in current workspace: {session_id}"))
 }
 
-fn select_session(
+fn select_session_target(
     sessions: &[SessionSummary],
     max_sessions: usize,
     wizard_mode: bool,
-) -> Result<SessionSummary> {
-    if sessions.len() == 1 {
-        return Ok(sessions[0].clone());
-    }
-
+) -> Result<SessionTarget> {
     if !wizard_mode {
-        return Ok(sessions[0].clone());
+        return Ok(SessionTarget::Existing(sessions[0].clone()));
     }
 
     print_sessions(
@@ -497,12 +561,15 @@ fn select_session(
         max_sessions,
     );
     println!();
-    println!("Press Enter to choose the newest session.");
+    println!("Press Enter to choose the newest session, or type n for a new conversation.");
 
     loop {
-        let input = read_line("Select a session number (Enter=1, q=quit): ")?;
+        let input = read_line("Select a session number (Enter=1, n=new, q=quit): ")?;
         if input.trim().is_empty() {
-            return Ok(sessions[0].clone());
+            return Ok(SessionTarget::Existing(sessions[0].clone()));
+        }
+        if input.trim().eq_ignore_ascii_case("n") {
+            return Ok(SessionTarget::NewConversation);
         }
         if input.trim().eq_ignore_ascii_case("q") {
             bail!("Cancelled by user");
@@ -512,7 +579,7 @@ fn select_session(
             .parse::<usize>()
             .with_context(|| format!("Invalid selection: {}", input.trim()))?;
         if selection >= 1 && selection <= sessions.len().min(max_sessions) {
-            return Ok(sessions[selection - 1].clone());
+            return Ok(SessionTarget::Existing(sessions[selection - 1].clone()));
         }
         println!("Please enter a valid number from the list.");
     }
@@ -731,6 +798,7 @@ mod tests {
         let result = run_resume_loop(Cli {
             install: false,
             uninstall: false,
+            new_session: false,
             session_id: Some("session-1".to_owned()),
             latest: false,
             allow_current_session: false,
@@ -789,6 +857,111 @@ mod tests {
         assert!(captured_args[4].contains("compare the current result against the original request"));
         let error = result.expect_err("non-zero round summary should error");
         assert!(error.to_string().contains("Completed 2 rounds"));
+    }
+
+    #[test]
+    fn new_session_rejects_rounds() {
+        let error = validate_new_session_args(&Cli {
+            install: false,
+            uninstall: false,
+            new_session: true,
+            session_id: None,
+            latest: false,
+            allow_current_session: false,
+            interactive: false,
+            list_sessions: false,
+            max_sessions: 20,
+            codex_home: None,
+            dry_run: false,
+            purge_history: false,
+            times: Some(2),
+            prompt: None,
+        })
+        .expect_err("new session with rounds should fail");
+
+        assert!(error.to_string().contains("does not accept rounds"));
+    }
+
+    #[test]
+    fn new_session_rejects_existing_session_selectors() {
+        let error = validate_new_session_args(&Cli {
+            install: false,
+            uninstall: false,
+            new_session: true,
+            session_id: Some("session-1".to_owned()),
+            latest: false,
+            allow_current_session: false,
+            interactive: false,
+            list_sessions: false,
+            max_sessions: 20,
+            codex_home: None,
+            dry_run: false,
+            purge_history: false,
+            times: None,
+            prompt: None,
+        })
+        .expect_err("new session with session selector should fail");
+
+        assert!(error.to_string().contains("existing-session selectors"));
+    }
+
+    #[test]
+    fn new_session_launches_plain_codex_without_resume_args() {
+        let _guard = ENV_MUTEX.lock().expect("env mutex");
+        let temp = tempdir().expect("tempdir");
+        let workspace = temp.path().join("workspace");
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::create_dir_all(&bin_dir).expect("bin");
+
+        std::fs::write(
+            bin_dir.join("codex.cmd"),
+            "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0mock-codex.ps1\" %*\r\nexit /b %ERRORLEVEL%\r\n",
+        )
+        .expect("write codex cmd");
+        std::fs::write(
+            bin_dir.join("mock-codex.ps1"),
+            "$argsPath = Join-Path $PSScriptRoot 'args.txt'\r\n[System.IO.File]::WriteAllLines($argsPath, $args)\r\nexit 0\r\n",
+        )
+        .expect("write mock codex");
+
+        let original_dir = env::current_dir().expect("current dir");
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", format!("{};{}", bin_dir.display(), original_path));
+        }
+        env::set_current_dir(&workspace).expect("set current dir");
+
+        let result = run_resume_loop(Cli {
+            install: false,
+            uninstall: false,
+            new_session: true,
+            session_id: None,
+            latest: false,
+            allow_current_session: false,
+            interactive: false,
+            list_sessions: false,
+            max_sessions: 20,
+            codex_home: None,
+            dry_run: false,
+            purge_history: false,
+            times: None,
+            prompt: Some("start fresh".to_owned()),
+        });
+
+        env::set_current_dir(original_dir).expect("restore current dir");
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+
+        let captured_args = std::fs::read_to_string(bin_dir.join("args.txt"))
+            .expect("read args file")
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+
+        result.expect("new session run should succeed");
+        assert_eq!(captured_args, vec!["start fresh".to_owned()]);
     }
 
     #[cfg(target_os = "windows")]

@@ -11,9 +11,9 @@ if ($cargoToml -notmatch 'version\s*=\s*"([^"]+)"') {
 $version = $Matches[1]
 
 $distDir = Join-Path $RepoRoot "dist"
-$buildDir = Join-Path $RepoRoot "dist-target"
+$buildDir = Join-Path $RepoRoot "dist-target-windows"
 $stageDir = Join-Path $buildDir "windows-installer-stage"
-$releaseDir = Join-Path $RepoRoot "target\release"
+$releaseDir = Join-Path $buildDir "release"
 $issPath = Join-Path $PSScriptRoot "crl.iss"
 $isccPath = "C:\Users\shcem\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 
@@ -24,9 +24,19 @@ if (Test-Path $stageDir) {
 New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
 
 Push-Location $RepoRoot
+$previousReleaseOptLevel = $env:CARGO_PROFILE_RELEASE_OPT_LEVEL
+$env:CARGO_PROFILE_RELEASE_OPT_LEVEL = "2"
 try {
-    cargo build --release
+    cargo build --release --target-dir $buildDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "cargo build --release failed"
+    }
 } finally {
+    if ($null -eq $previousReleaseOptLevel) {
+        Remove-Item Env:CARGO_PROFILE_RELEASE_OPT_LEVEL -ErrorAction SilentlyContinue
+    } else {
+        $env:CARGO_PROFILE_RELEASE_OPT_LEVEL = $previousReleaseOptLevel
+    }
     Pop-Location
 }
 

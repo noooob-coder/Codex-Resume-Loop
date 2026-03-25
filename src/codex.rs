@@ -33,10 +33,20 @@ pub struct CodexLaunch {
 
 impl CodexLaunch {
     pub fn command(&self) -> Command {
+        self.command_with_window_hidden(true)
+    }
+
+    pub fn interactive_command(&self) -> Command {
+        self.command_with_window_hidden(false)
+    }
+
+    fn command_with_window_hidden(&self, _hide_window: bool) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.prefix_args);
         #[cfg(target_os = "windows")]
-        command.creation_flags(CREATE_NO_WINDOW);
+        if _hide_window {
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
         command
     }
 
@@ -145,6 +155,19 @@ pub fn prepare_resume_command(launch: &CodexLaunch, session_id: &str, prompt: &s
 pub fn resolve_resume_command(session_id: &str, prompt: &str) -> Result<Command> {
     let launch = resolve_codex_launch()?;
     Ok(prepare_resume_command(&launch, session_id, prompt))
+}
+
+pub fn prepare_new_session_command(launch: &CodexLaunch, prompt: Option<&str>) -> Command {
+    let mut command = launch.interactive_command();
+    if let Some(prompt) = prompt.map(str::trim).filter(|prompt| !prompt.is_empty()) {
+        command.arg(prompt);
+    }
+    command
+}
+
+pub fn resolve_new_session_command(prompt: Option<&str>) -> Result<Command> {
+    let launch = resolve_codex_launch()?;
+    Ok(prepare_new_session_command(&launch, prompt))
 }
 
 pub fn resolve_codex_launch() -> Result<CodexLaunch> {
@@ -674,6 +697,26 @@ mod tests {
                 "session-1".to_owned(),
                 "restore exactly".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn prepare_new_session_command_keeps_launcher_prefix_args() {
+        let launch = CodexLaunch {
+            program: PathBuf::from("node.exe"),
+            prefix_args: vec![OsString::from(r"C:\mock\codex.js")],
+        };
+
+        let command = prepare_new_session_command(&launch, Some("start fresh"));
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), Path::new("node.exe"));
+        assert_eq!(
+            args,
+            vec![r"C:\mock\codex.js".to_owned(), "start fresh".to_owned()]
         );
     }
 
