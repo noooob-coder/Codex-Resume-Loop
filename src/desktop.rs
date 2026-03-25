@@ -7,16 +7,16 @@ use crate::model::{
     RunStatus, StoredAppState, StoredWorkspace, WorkspaceRunRequest, WorkspaceState,
 };
 use crate::persistence;
-use crate::runtime::{RuntimeEvent, TaskHandle, TaskOutcome, spawn_workspace_runner};
+use crate::runtime::{
+    RuntimeEvent, TaskHandle, TaskOutcome, spawn_new_session_runner, spawn_workspace_runner,
+};
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rfd::FileDialog;
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel, Weak};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -937,17 +937,31 @@ impl DesktopController {
             return;
         }
 
-        match spawn_new_session_terminal(&workspace_path) {
-            Ok(()) => {
-                self.notice = Some("Opened a new Codex conversation in a separate terminal.".to_owned());
-                self.codex_home_refresh_due = Some(Instant::now() + Duration::from_secs(2));
-                self.mark_ui_dirty();
-            }
-            Err(error) => {
-                self.notice = Some(format!("Unable to start a new conversation: {error}"));
-                self.mark_ui_dirty();
-            }
+        if workspace.status.is_running() || self.tasks.contains_key(&workspace_id) {
+            self.notice = Some("A task is already running for this workspace.".to_owned());
+            self.mark_ui_dirty();
+            return;
         }
+
+        let prompt = workspace.prompt.trim().to_owned();
+        if prompt.is_empty() {
+            self.notice = Some("Prompt cannot be empty.".to_owned());
+            self.mark_ui_dirty();
+            return;
+        }
+
+        if let Some(workspace) = self.workspace_mut(workspace_id) {
+            workspace.clear_logs();
+        }
+        let handle = spawn_new_session_runner(
+            workspace_id,
+            workspace_path,
+            prompt,
+            self.event_tx.clone(),
+        );
+        self.tasks.insert(workspace_id, handle);
+        self.notice = Some("Creating a new Codex conversation in the background.".to_owned());
+        self.mark_ui_dirty();
     }
 
     fn process_runtime_events(&mut self) {
@@ -989,6 +1003,7 @@ impl DesktopController {
                     workspace_id,
                     outcome,
                 } => {
+                    let should_refresh_sessions = matches!(&outcome, TaskOutcome::Completed);
                     append_log(&format!(
                         "runtime finished for workspace_id={workspace_id}: {:?}",
                         outcome
@@ -1005,6 +1020,9 @@ impl DesktopController {
                             TaskOutcome::Error(message) => RunStatus::Error(message),
                         };
                         self.mark_ui_dirty();
+                    }
+                    if should_refresh_sessions {
+                        self.refresh_workspace_sessions(workspace_id);
                     }
                 }
             }
@@ -1232,71 +1250,6 @@ fn build_windows_new_session_script(cli_path: &Path, workspace_path: &Path) -> S
 
 */
 
-#[cfg(target_os = "windows")]
-fn spawn_new_session_terminal(workspace_path: &Path) -> Result<(), String> {
-    let cli_path = resolve_desktop_cli_path()?;
-    let script_path = env::temp_dir().join(format!(
-        "crl-new-session-{}.cmd",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    ));
-    let script = build_windows_new_session_script(&cli_path, workspace_path);
-    fs::write(&script_path, script)
-        .map_err(|error| format!("Unable to write the new-session launcher script: {error}"))?;
-
-    let mut command = Command::new("cmd.exe");
-    command
-        .arg("/d")
-        .arg("/c")
-        .arg("start")
-        .arg("")
-        .arg(script_path.as_os_str());
-    command
-        .spawn()
-        .map_err(|error| format!("Unable to launch the new terminal window: {error}"))?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn spawn_new_session_terminal(_workspace_path: &Path) -> Result<(), String> {
-    Err("Desktop new conversations are only supported on Windows.".to_owned())
-}
-
-#[cfg(target_os = "windows")]
-fn resolve_desktop_cli_path() -> Result<PathBuf, String> {
-    let current_exe =
-        env::current_exe().map_err(|error| format!("Unable to locate the desktop executable: {error}"))?;
-    let sibling = current_exe.with_file_name("crl.exe");
-    if sibling.exists() {
-        return Ok(sibling);
-    }
-
-    let mut where_command = Command::new("where.exe");
-    where_command.arg("crl");
-    let output = where_command
-        .output()
-        .map_err(|error| format!("Unable to search PATH for crl.exe: {error}"))?;
-    if output.status.success() {
-        if let Some(path) = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-        {
-            return Ok(PathBuf::from(path));
-        }
-    }
-
-    Err("Unable to find crl.exe. Keep crl.exe next to crl-desktop.exe or make crl available on PATH.".to_owned())
-}
-
-#[cfg(target_os = "windows")]
-fn build_windows_new_session_script(cli_path: &Path, workspace_path: &Path) -> String {
-    format!(
-        "@echo off\r\ncd /d \"{}\"\r\n\"{}\" --new\r\ndel \"%~f0\" >nul 2>nul\r\n",
-        workspace_path.display(),
-        cli_path.display(),
-    )
-}
-
 #[cfg(test)]
 fn format_terminal_output(logs: &VecDeque<LogEntry>) -> String {
     logs.iter()
@@ -1316,6 +1269,10 @@ fn format_terminal_output(logs: &VecDeque<LogEntry>) -> String {
 mod tests {
     use super::*;
     use crate::model::SessionSummary;
+    use std::sync::{LazyLock, Mutex};
+    use tempfile::tempdir;
+
+    static ENV_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     struct TestUiModels {
         workspace_rows: Rc<VecModel<WorkspaceRow>>,
@@ -1650,15 +1607,71 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn build_windows_new_session_script_uses_cli_new_flag() {
-        let script = build_windows_new_session_script(
-            Path::new(r"C:\Apps\Codex-Resume-Loop\crl.exe"),
-            Path::new(r"E:\project\demo"),
-        );
+    fn create_new_session_runs_in_background_without_terminal_launcher() {
+        let _guard = ENV_MUTEX.lock().expect("env mutex");
+        let temp = tempdir().expect("tempdir");
+        let workspace_dir = temp.path().join("workspace");
+        let codex_home = temp.path().join("codex-home");
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&workspace_dir).expect("workspace");
+        std::fs::create_dir_all(&bin_dir).expect("bin");
 
-        assert!(script.contains(r#"cd /d "E:\project\demo""#));
-        assert!(script.contains(r#""C:\Apps\Codex-Resume-Loop\crl.exe" --new"#));
-        assert!(script.contains(r#"del "%~f0""#));
+        std::fs::write(
+            bin_dir.join("codex.cmd"),
+            "@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0mock-codex.ps1\" %*\r\nexit /b %ERRORLEVEL%\r\n",
+        )
+        .expect("write codex cmd");
+        std::fs::write(
+            bin_dir.join("mock-codex.ps1"),
+            "$argsPath = Join-Path $PSScriptRoot 'args.txt'\r\n[System.IO.File]::WriteAllLines($argsPath, $args)\r\nWrite-Output 'created'\r\nexit 0\r\n",
+        )
+        .expect("write mock codex");
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", format!("{};{}", bin_dir.display(), original_path));
+        }
+
+        let mut controller = sample_controller();
+        controller.codex_home_input = codex_home.to_string_lossy().to_string();
+        controller.workspaces = vec![sample_workspace(
+            1,
+            &workspace_dir.to_string_lossy(),
+            "workspace",
+        )];
+        controller.workspaces[0].prompt = "start fresh".to_owned();
+        controller.selected_workspace_id = Some(1);
+
+        controller.create_new_session_for_selected_workspace();
+
+        for _ in 0..60 {
+            controller.process_runtime_events();
+            if controller.tasks.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        unsafe {
+            std::env::set_var("PATH", original_path);
+        }
+
+        let args = std::fs::read_to_string(bin_dir.join("args.txt"))
+            .expect("args file")
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+
+        assert!(controller.tasks.is_empty());
+        assert_eq!(
+            args,
+            vec![
+                "exec".to_owned(),
+                "--skip-git-repo-check".to_owned(),
+                "start fresh".to_owned(),
+            ]
+        );
+        assert!(controller.workspaces[0].terminal_output.contains("> created"));
     }
 
     #[test]

@@ -170,6 +170,20 @@ pub fn resolve_new_session_command(prompt: Option<&str>) -> Result<Command> {
     Ok(prepare_new_session_command(&launch, prompt))
 }
 
+pub fn prepare_new_session_exec_command(launch: &CodexLaunch, prompt: &str) -> Command {
+    let mut command = launch.command();
+    command
+        .arg("exec")
+        .arg("--skip-git-repo-check")
+        .arg(prompt.trim());
+    command
+}
+
+pub fn resolve_new_session_exec_command(prompt: &str) -> Result<Command> {
+    let launch = resolve_codex_launch()?;
+    Ok(prepare_new_session_exec_command(&launch, prompt))
+}
+
 pub fn resolve_codex_launch() -> Result<CodexLaunch> {
     #[cfg(target_os = "windows")]
     {
@@ -717,6 +731,31 @@ mod tests {
         assert_eq!(
             args,
             vec![r"C:\mock\codex.js".to_owned(), "start fresh".to_owned()]
+        );
+    }
+
+    #[test]
+    fn prepare_new_session_exec_command_uses_exec_mode() {
+        let launch = CodexLaunch {
+            program: PathBuf::from("node.exe"),
+            prefix_args: vec![OsString::from(r"C:\mock\codex.js")],
+        };
+
+        let command = prepare_new_session_exec_command(&launch, "start fresh");
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), Path::new("node.exe"));
+        assert_eq!(
+            args,
+            vec![
+                r"C:\mock\codex.js".to_owned(),
+                "exec".to_owned(),
+                "--skip-git-repo-check".to_owned(),
+                "start fresh".to_owned(),
+            ]
         );
     }
 

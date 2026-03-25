@@ -1,9 +1,13 @@
-use crate::codex::{build_resume_prompt, prepare_resume_command, resolve_codex_launch};
+use crate::codex::{
+    build_resume_prompt, prepare_new_session_exec_command, prepare_resume_command,
+    resolve_codex_launch,
+};
 use crate::diagnostics::append_log;
 use crate::model::{LogEntry, LogStream, WorkspaceRunRequest};
 use chrono::Local;
 use crossbeam_channel::Sender;
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -75,6 +79,27 @@ pub fn spawn_workspace_runner(
     let worker_child = Arc::clone(&child_slot);
     let join = thread::spawn(move || {
         run_workspace_loop(request, sender, worker_stop, worker_child);
+    });
+
+    TaskHandle {
+        stop_flag,
+        child: child_slot,
+        _join: join,
+    }
+}
+
+pub fn spawn_new_session_runner(
+    workspace_id: u64,
+    path: PathBuf,
+    prompt: String,
+    sender: Sender<RuntimeEvent>,
+) -> TaskHandle {
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let child_slot = Arc::new(Mutex::new(None));
+    let worker_stop = Arc::clone(&stop_flag);
+    let worker_child = Arc::clone(&child_slot);
+    let join = thread::spawn(move || {
+        run_new_session(workspace_id, path, prompt, sender, worker_stop, worker_child);
     });
 
     TaskHandle {
@@ -303,6 +328,175 @@ fn run_workspace_loop(
     let _ = sender.send(RuntimeEvent::Finished {
         workspace_id: request.workspace_id,
         outcome: TaskOutcome::Error(format!("已尝试全部轮次，但以下轮次失败：{summary}")),
+    });
+}
+
+fn run_new_session(
+    workspace_id: u64,
+    path: PathBuf,
+    prompt: String,
+    sender: Sender<RuntimeEvent>,
+    stop_flag: Arc<AtomicBool>,
+    child_slot: Arc<Mutex<Option<Child>>>,
+) {
+    let trimmed_prompt = prompt.trim().to_owned();
+    if trimmed_prompt.is_empty() {
+        let _ = sender.send(RuntimeEvent::Finished {
+            workspace_id,
+            outcome: TaskOutcome::Error("Prompt cannot be empty.".to_owned()),
+        });
+        return;
+    }
+
+    let _ = sender.send(RuntimeEvent::RoundStarted {
+        workspace_id,
+        current_round: 1,
+        total_rounds: 1,
+    });
+    let _ = sender.send(RuntimeEvent::Log {
+        workspace_id,
+        entry: LogEntry {
+            timestamp: Local::now(),
+            stream: LogStream::System,
+            text: "Creating a new Codex conversation.".to_owned(),
+        },
+    });
+
+    let launch = match resolve_codex_launch() {
+        Ok(launch) => launch,
+        Err(error) => {
+            append_log(&format!("resolve_codex_launch failed: {error}"));
+            let _ = sender.send(RuntimeEvent::Finished {
+                workspace_id,
+                outcome: TaskOutcome::Error(error.to_string()),
+            });
+            return;
+        }
+    };
+
+    let mut command = prepare_new_session_exec_command(&launch, &trimmed_prompt);
+    command.current_dir(&path).stdout(Stdio::piped()).stderr(Stdio::piped());
+    append_log(&format!(
+        "spawning new-session codex process workspace_id={} cwd={}",
+        workspace_id,
+        path.display()
+    ));
+
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            append_log(&format!("new-session command.spawn failed: {error}"));
+            let _ = sender.send(RuntimeEvent::Finished {
+                workspace_id,
+                outcome: TaskOutcome::Error(format!(
+                    "Failed to start a new Codex conversation: {error}"
+                )),
+            });
+            return;
+        }
+    };
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    if let Ok(mut guard) = child_slot.lock() {
+        *guard = Some(child);
+    }
+
+    let stdout_join =
+        stdout.map(|stdout| spawn_stream_reader(stdout, workspace_id, LogStream::Stdout, sender.clone()));
+    let stderr_join =
+        stderr.map(|stderr| spawn_stream_reader(stderr, workspace_id, LogStream::Stderr, sender.clone()));
+
+    let exit_status = loop {
+        if stop_flag.load(Ordering::SeqCst)
+            && let Ok(mut guard) = child_slot.lock()
+            && let Some(child) = guard.as_mut()
+        {
+            let _ = child.kill();
+        }
+
+        let maybe_status = {
+            let mut guard = match child_slot.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    let _ = sender.send(RuntimeEvent::Finished {
+                        workspace_id,
+                        outcome: TaskOutcome::Error(
+                            "Failed to lock the running new-session process.".to_owned(),
+                        ),
+                    });
+                    return;
+                }
+            };
+
+            if let Some(child) = guard.as_mut() {
+                match child.try_wait() {
+                    Ok(status) => status,
+                    Err(error) => {
+                        let _ = sender.send(RuntimeEvent::Finished {
+                            workspace_id,
+                            outcome: TaskOutcome::Error(format!(
+                                "Failed to read the new-session process state: {error}"
+                            )),
+                        });
+                        return;
+                    }
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(status) = maybe_status {
+            break status;
+        }
+
+        thread::sleep(Duration::from_millis(120));
+    };
+
+    if let Ok(mut guard) = child_slot.lock() {
+        guard.take();
+    }
+    if let Some(join) = stdout_join {
+        let _ = join.join();
+    }
+    if let Some(join) = stderr_join {
+        let _ = join.join();
+    }
+
+    if stop_flag.load(Ordering::SeqCst) {
+        let _ = sender.send(RuntimeEvent::Finished {
+            workspace_id,
+            outcome: TaskOutcome::Stopped,
+        });
+        return;
+    }
+
+    if !exit_status.success() {
+        let code = exit_status
+            .code()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        let _ = sender.send(RuntimeEvent::Finished {
+            workspace_id,
+            outcome: TaskOutcome::Error(format!(
+                "The new Codex conversation exited with code {code}."
+            )),
+        });
+        return;
+    }
+
+    let _ = sender.send(RuntimeEvent::Log {
+        workspace_id,
+        entry: LogEntry {
+            timestamp: Local::now(),
+            stream: LogStream::System,
+            text: "New Codex conversation created.".to_owned(),
+        },
+    });
+    let _ = sender.send(RuntimeEvent::Finished {
+        workspace_id,
+        outcome: TaskOutcome::Completed,
     });
 }
 
