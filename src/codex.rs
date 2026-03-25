@@ -556,12 +556,13 @@ fn read_history_summaries(
             continue;
         }
 
-        if should_ignore_history_text(&entry.text) {
+        let sanitized_text = sanitize_history_text(&entry.text);
+        if sanitized_text.is_empty() {
             continue;
         }
 
         let summary = summaries.entry(entry.session_id).or_default();
-        let preview = single_line_preview(&entry.text, 72);
+        let preview = single_line_preview(&sanitized_text, 72);
         if summary.first_text.is_none() {
             summary.first_text = Some(preview.clone());
         }
@@ -574,13 +575,40 @@ fn read_history_summaries(
     Ok(summaries)
 }
 
-fn should_ignore_history_text(text: &str) -> bool {
-    let compact = compact_inline_text(text);
-    if compact.is_empty() {
-        return true;
+fn sanitize_history_text(text: &str) -> String {
+    let mut kept_lines = Vec::new();
+    let mut suppress_shell_block = false;
+
+    for raw_line in text.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if suppress_shell_block {
+            if trimmed.eq_ignore_ascii_case("</user_shell_command>") {
+                suppress_shell_block = false;
+            }
+            continue;
+        }
+
+        if trimmed.eq_ignore_ascii_case("<user_shell_command>") {
+            suppress_shell_block = true;
+            continue;
+        }
+
+        if is_internal_history_line(trimmed) {
+            continue;
+        }
+
+        kept_lines.push(trimmed);
     }
 
-    let lowered = compact.to_ascii_lowercase();
+    compact_inline_text(&kept_lines.join("\n"))
+}
+
+fn is_internal_history_line(trimmed: &str) -> bool {
+    let lowered = trimmed.to_ascii_lowercase();
     lowered.starts_with("continue from the exact previous stopping point and finish the unfinished work.")
         || lowered.contains("\"type\":\"turn_context\"")
         || lowered.contains("\"type\":\"response_item\"")
@@ -593,6 +621,29 @@ fn should_ignore_history_text(text: &str) -> bool {
         || lowered.contains("approval_policy")
         || lowered.contains("sandbox_policy")
         || lowered.contains("\"current_date\":")
+        || lowered == "<command>"
+        || lowered == "</command>"
+        || lowered == "<result>"
+        || lowered == "</result>"
+        || lowered == "<user_shell_command>"
+        || lowered == "</user_shell_command>"
+        || lowered == "! exec"
+        || lowered.starts_with("! \"")
+        || lowered.starts_with("!  succeeded in")
+        || lowered.starts_with("! succeeded in")
+        || lowered.starts_with("!  exited")
+        || lowered.starts_with("! exited")
+        || lowered.starts_with("! e:\\")
+        || lowered.starts_with("! c:\\")
+        || (trimmed.starts_with("At line:") && lowered.contains("char:"))
+        || lowered.starts_with("+ ! ")
+        || lowered.starts_with("+  ~")
+        || lowered.starts_with("+   ~")
+        || lowered.starts_with("missing expression after unary operator")
+        || lowered.starts_with("unexpected token")
+        || lowered.starts_with("not all parse errors were reported")
+        || lowered.starts_with("    + categoryinfo")
+        || lowered.starts_with("    + fullyqualifiederrorid")
 }
 
 fn single_line_preview(text: &str, max_len: usize) -> String {
@@ -752,6 +803,30 @@ mod tests {
         assert_eq!(sessions[0].title, "real user task");
         assert_eq!(sessions[0].last_text, "real user task");
         assert_eq!(sessions[0].message_count, 1);
+    }
+
+    #[test]
+    fn sanitizes_shell_transcript_noise_from_history_text() {
+        let sanitized = sanitize_history_text(
+            "我继续卡在实现细节上，不会停在分析。\n\
+             <user_shell_command>\n\
+             <command>\n\
+             ! exec\n\
+             ! \"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"rg -n\"\n\
+             </command>\n\
+             <result>\n\
+             ! E:\\project\\run_spider\\target\\debug\\build\\crl-desktop\\out\\main.rs:39656: pub fn get_session_rows\n\
+             At line:2 char:2\n\
+             Missing expression after unary operator '!'.\n\
+             </result>\n\
+             </user_shell_command>\n\
+             继续补真正的生产路径。\n",
+        );
+
+        assert_eq!(
+            sanitized,
+            "我继续卡在实现细节上，不会停在分析。 继续补真正的生产路径。"
+        );
     }
 
     #[test]
