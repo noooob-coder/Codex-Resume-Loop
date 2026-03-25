@@ -66,6 +66,38 @@ begin
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
 end;
 
+procedure DeleteIfPresent(Path: string);
+begin
+  if FileExists(Path) then
+    DeleteFile(Path);
+end;
+
+procedure RemoveLegacyCliCopies();
+var
+  LegacyBinDir: string;
+  LegacyInstallDir: string;
+begin
+  LegacyBinDir := AddBackslash(GetEnv('USERPROFILE')) + '.local\bin';
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl.exe');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop.exe');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl.cmd');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop.cmd');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl.ps1');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop.ps1');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl');
+  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop');
+
+  LegacyInstallDir := AddBackslash(ExpandConstant('{localappdata}')) + 'Programs\CRL';
+  if DirExists(LegacyInstallDir) then
+    DelTree(LegacyInstallDir, True, True, True);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RemoveLegacyCliCopies();
+end;
+
 function InitializeUninstall(): Boolean;
 begin
   RemoveHistoryOnUninstall := False;
