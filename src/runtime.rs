@@ -108,6 +108,8 @@ pub fn spawn_new_session_runner(
     }
 }
 
+const NEW_SESSION_MAX_ATTEMPTS: u32 = 2;
+
 fn run_workspace_loop(
     request: WorkspaceRunRequest,
     sender: Sender<RuntimeEvent>,
@@ -337,20 +339,6 @@ fn run_new_session(
     stop_flag: Arc<AtomicBool>,
     child_slot: Arc<Mutex<Option<Child>>>,
 ) {
-    let _ = sender.send(RuntimeEvent::RoundStarted {
-        workspace_id,
-        current_round: 1,
-        total_rounds: 1,
-    });
-    let _ = sender.send(RuntimeEvent::Log {
-        workspace_id,
-        entry: LogEntry {
-            timestamp: Local::now(),
-            stream: LogStream::System,
-            text: "Creating a new Codex conversation.".to_owned(),
-        },
-    });
-
     let launch = match resolve_codex_launch() {
         Ok(launch) => launch,
         Err(error) => {
@@ -363,105 +351,168 @@ fn run_new_session(
         }
     };
 
-    let mut command = prepare_new_session_exec_command(&launch);
-    command.current_dir(&path).stdout(Stdio::piped()).stderr(Stdio::piped());
-    append_log(&format!(
-        "spawning new-session codex process workspace_id={} cwd={}",
-        workspace_id,
-        path.display()
-    ));
+    for attempt in 1..=NEW_SESSION_MAX_ATTEMPTS {
+        let _ = sender.send(RuntimeEvent::RoundStarted {
+            workspace_id,
+            current_round: attempt,
+            total_rounds: NEW_SESSION_MAX_ATTEMPTS,
+        });
+        let _ = sender.send(RuntimeEvent::Log {
+            workspace_id,
+            entry: LogEntry {
+                timestamp: Local::now(),
+                stream: LogStream::System,
+                text: if attempt == 1 {
+                    "Creating a new Codex conversation.".to_owned()
+                } else {
+                    format!(
+                        "Retrying the new Codex conversation after a transient stream disconnect ({attempt}/{NEW_SESSION_MAX_ATTEMPTS})."
+                    )
+                },
+            },
+        });
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            append_log(&format!("new-session command.spawn failed: {error}"));
-            let _ = sender.send(RuntimeEvent::Finished {
-                workspace_id,
-                outcome: TaskOutcome::Error(format!(
-                    "Failed to start a new Codex conversation: {error}"
-                )),
-            });
-            return;
-        }
-    };
+        let mut command = prepare_new_session_exec_command(&launch);
+        command.current_dir(&path).stdout(Stdio::piped()).stderr(Stdio::piped());
+        append_log(&format!(
+            "spawning new-session codex process workspace_id={} cwd={} attempt={}",
+            workspace_id,
+            path.display(),
+            attempt
+        ));
 
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    if let Ok(mut guard) = child_slot.lock() {
-        *guard = Some(child);
-    }
-
-    let stdout_join =
-        stdout.map(|stdout| spawn_stream_reader(stdout, workspace_id, LogStream::Stdout, sender.clone()));
-    let stderr_join =
-        stderr.map(|stderr| spawn_stream_reader(stderr, workspace_id, LogStream::Stderr, sender.clone()));
-
-    let exit_status = loop {
-        if stop_flag.load(Ordering::SeqCst)
-            && let Ok(mut guard) = child_slot.lock()
-            && let Some(child) = guard.as_mut()
-        {
-            let _ = child.kill();
-        }
-
-        let maybe_status = {
-            let mut guard = match child_slot.lock() {
-                Ok(guard) => guard,
-                Err(_) => {
-                    let _ = sender.send(RuntimeEvent::Finished {
-                        workspace_id,
-                        outcome: TaskOutcome::Error(
-                            "Failed to lock the running new-session process.".to_owned(),
-                        ),
-                    });
-                    return;
-                }
-            };
-
-            if let Some(child) = guard.as_mut() {
-                match child.try_wait() {
-                    Ok(status) => status,
-                    Err(error) => {
-                        let _ = sender.send(RuntimeEvent::Finished {
-                            workspace_id,
-                            outcome: TaskOutcome::Error(format!(
-                                "Failed to read the new-session process state: {error}"
-                            )),
-                        });
-                        return;
-                    }
-                }
-            } else {
-                None
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                append_log(&format!("new-session command.spawn failed: {error}"));
+                let _ = sender.send(RuntimeEvent::Finished {
+                    workspace_id,
+                    outcome: TaskOutcome::Error(format!(
+                        "Failed to start a new Codex conversation: {error}"
+                    )),
+                });
+                return;
             }
         };
 
-        if let Some(status) = maybe_status {
-            break status;
+        let capture = Arc::new(Mutex::new(String::new()));
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        if let Ok(mut guard) = child_slot.lock() {
+            *guard = Some(child);
         }
 
-        thread::sleep(Duration::from_millis(120));
-    };
-
-    if let Ok(mut guard) = child_slot.lock() {
-        guard.take();
-    }
-    if let Some(join) = stdout_join {
-        let _ = join.join();
-    }
-    if let Some(join) = stderr_join {
-        let _ = join.join();
-    }
-
-    if stop_flag.load(Ordering::SeqCst) {
-        let _ = sender.send(RuntimeEvent::Finished {
-            workspace_id,
-            outcome: TaskOutcome::Stopped,
+        let stdout_join = stdout.map(|stdout| {
+            spawn_stream_reader_with_capture(
+                stdout,
+                workspace_id,
+                LogStream::Stdout,
+                sender.clone(),
+                Arc::clone(&capture),
+            )
         });
-        return;
-    }
+        let stderr_join = stderr.map(|stderr| {
+            spawn_stream_reader_with_capture(
+                stderr,
+                workspace_id,
+                LogStream::Stderr,
+                sender.clone(),
+                Arc::clone(&capture),
+            )
+        });
 
-    if !exit_status.success() {
+        let exit_status = loop {
+            if stop_flag.load(Ordering::SeqCst)
+                && let Ok(mut guard) = child_slot.lock()
+                && let Some(child) = guard.as_mut()
+            {
+                let _ = child.kill();
+            }
+
+            let maybe_status = {
+                let mut guard = match child_slot.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        let _ = sender.send(RuntimeEvent::Finished {
+                            workspace_id,
+                            outcome: TaskOutcome::Error(
+                                "Failed to lock the running new-session process.".to_owned(),
+                            ),
+                        });
+                        return;
+                    }
+                };
+
+                if let Some(child) = guard.as_mut() {
+                    match child.try_wait() {
+                        Ok(status) => status,
+                        Err(error) => {
+                            let _ = sender.send(RuntimeEvent::Finished {
+                                workspace_id,
+                                outcome: TaskOutcome::Error(format!(
+                                    "Failed to read the new-session process state: {error}"
+                                )),
+                            });
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                }
+            };
+
+            if let Some(status) = maybe_status {
+                break status;
+            }
+
+            thread::sleep(Duration::from_millis(120));
+        };
+
+        if let Ok(mut guard) = child_slot.lock() {
+            guard.take();
+        }
+        if let Some(join) = stdout_join {
+            let _ = join.join();
+        }
+        if let Some(join) = stderr_join {
+            let _ = join.join();
+        }
+
+        if stop_flag.load(Ordering::SeqCst) {
+            let _ = sender.send(RuntimeEvent::Finished {
+                workspace_id,
+                outcome: TaskOutcome::Stopped,
+            });
+            return;
+        }
+
+        if exit_status.success() {
+            let _ = sender.send(RuntimeEvent::Log {
+                workspace_id,
+                entry: LogEntry {
+                    timestamp: Local::now(),
+                    stream: LogStream::System,
+                    text: "New Codex conversation created.".to_owned(),
+                },
+            });
+            let _ = sender.send(RuntimeEvent::Finished {
+                workspace_id,
+                outcome: TaskOutcome::Completed,
+            });
+            return;
+        }
+
+        let captured_output = capture
+            .lock()
+            .map(|value| value.clone())
+            .unwrap_or_default();
+        if attempt < NEW_SESSION_MAX_ATTEMPTS
+            && is_transient_stream_disconnect(&captured_output)
+        {
+            thread::sleep(Duration::from_millis(600));
+            continue;
+        }
+
         let code = exit_status
             .code()
             .map(|value| value.to_string())
@@ -474,19 +525,6 @@ fn run_new_session(
         });
         return;
     }
-
-    let _ = sender.send(RuntimeEvent::Log {
-        workspace_id,
-        entry: LogEntry {
-            timestamp: Local::now(),
-            stream: LogStream::System,
-            text: "New Codex conversation created.".to_owned(),
-        },
-    });
-    let _ = sender.send(RuntimeEvent::Finished {
-        workspace_id,
-        outcome: TaskOutcome::Completed,
-    });
 }
 
 fn spawn_stream_reader<R>(
@@ -498,8 +536,34 @@ fn spawn_stream_reader<R>(
 where
     R: std::io::Read + Send + 'static,
 {
+    spawn_stream_reader_impl(reader, workspace_id, stream, sender, None)
+}
+
+fn spawn_stream_reader_with_capture<R>(
+    reader: R,
+    workspace_id: u64,
+    stream: LogStream,
+    sender: Sender<RuntimeEvent>,
+    capture: Arc<Mutex<String>>,
+) -> thread::JoinHandle<()>
+where
+    R: std::io::Read + Send + 'static,
+{
+    spawn_stream_reader_impl(reader, workspace_id, stream, sender, Some(capture))
+}
+
+fn spawn_stream_reader_impl<R>(
+    reader: R,
+    workspace_id: u64,
+    stream: LogStream,
+    sender: Sender<RuntimeEvent>,
+    capture: Option<Arc<Mutex<String>>>,
+) -> thread::JoinHandle<()>
+where
+    R: std::io::Read + Send + 'static,
+{
     thread::spawn(move || {
-        forward_stream_chunks(reader, workspace_id, stream, sender);
+        forward_stream_chunks(reader, workspace_id, stream, sender, capture);
     })
 }
 
@@ -508,6 +572,7 @@ fn forward_stream_chunks<R>(
     workspace_id: u64,
     stream: LogStream,
     sender: Sender<RuntimeEvent>,
+    capture: Option<Arc<Mutex<String>>>,
 ) where
     R: Read,
 {
@@ -523,6 +588,11 @@ fn forward_stream_chunks<R>(
 
         let chunk = decoder.push(&buffer[..read]);
         if !chunk.is_empty() {
+            if let Some(capture) = capture.as_ref()
+                && let Ok(mut transcript) = capture.lock()
+            {
+                transcript.push_str(&chunk);
+            }
             let _ = sender.send(RuntimeEvent::OutputChunk {
                 workspace_id,
                 stream,
@@ -533,12 +603,23 @@ fn forward_stream_chunks<R>(
 
     let final_chunk = decoder.finish();
     if !final_chunk.is_empty() {
+        if let Some(capture) = capture.as_ref()
+            && let Ok(mut transcript) = capture.lock()
+        {
+            transcript.push_str(&final_chunk);
+        }
         let _ = sender.send(RuntimeEvent::OutputChunk {
             workspace_id,
             stream,
             chunk: final_chunk,
         });
     }
+}
+
+fn is_transient_stream_disconnect(output: &str) -> bool {
+    let lowered = output.to_ascii_lowercase();
+    lowered.contains("stream disconnected before completion")
+        || lowered.contains("disconnected before completion")
 }
 
 #[derive(Default)]
