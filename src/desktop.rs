@@ -747,72 +747,6 @@ impl DesktopController {
             }
         }
     }
-
-    /*
-    fn start_workspace(&mut self, workspace_id: u64) {
-        append_log(&format!(
-            "start_workspace called for workspace_id={workspace_id}"
-        ));
-        if self.codex_error.is_some() {
-            self.notice = Some("当前无法启动任务，因为 codex 不可用。".to_owned());
-            append_log("start_workspace aborted: codex unavailable");
-            self.mark_ui_dirty();
-            return;
-        }
-
-        let Some(workspace) = self.workspace(workspace_id) else {
-            return;
-        };
-        if workspace.status.is_running() || self.tasks.contains_key(&workspace_id) {
-            return;
-        }
-
-        if workspace.selected_session_id.is_none() {
-            self.notice = Some(
-                "鍚姩浠诲姟鍓嶈鍏堥€夋嫨涓€涓細璇濓紝鎴栧厛鐐瑰嚮鈥滄柊寤哄璇濃€濆垱寤烘柊浼氳瘽銆?.to_owned(),
-            );
-            append_log("start_workspace aborted: no session selected");
-            self.mark_ui_dirty();
-            return;
-        }
-
-        let Some(session_id) = workspace.selected_session_id.clone() else {
-            self.notice = Some("启动任务前请先选择一个会话。".to_owned());
-            append_log("start_workspace aborted: no session selected");
-            self.mark_ui_dirty();
-            return;
-        };
-
-        if workspace.prompt.trim().is_empty() {
-            self.notice = Some("提示词不能为空。".to_owned());
-            append_log("start_workspace aborted: prompt empty");
-            self.mark_ui_dirty();
-            return;
-        }
-
-        append_log(&format!(
-            "spawning workspace runner workspace_id={} rounds={} session_id={}",
-            workspace_id,
-            workspace.rounds.max(1),
-            session_id
-        ));
-
-        let request = WorkspaceRunRequest {
-            workspace_id,
-            path: workspace.path_buf(),
-            session_id,
-            prompt: workspace.prompt.clone(),
-            rounds: workspace.rounds.max(1),
-        };
-
-        let handle = spawn_workspace_runner(request, self.event_tx.clone());
-        self.tasks.insert(workspace_id, handle);
-        self.notice = Some("任务已提交到后台运行时。".to_owned());
-        self.mark_ui_dirty();
-    }
-
-    */
-
     fn start_workspace(&mut self, workspace_id: u64) {
         append_log(&format!(
             "start_workspace called for workspace_id={workspace_id}"
@@ -884,42 +818,6 @@ impl DesktopController {
             self.mark_ui_dirty();
         }
     }
-
-    /*
-    fn create_new_session_for_workspace(&mut self, workspace_id: u64) {
-        if self.codex_error.is_some() {
-            self.notice = Some("褰撳墠鏃犳硶鏂板缓瀵硅瘽锛屽洜涓?codex 涓嶅彲鐢ㄣ€?.to_owned());
-            self.mark_ui_dirty();
-            return;
-        }
-
-        let Some(workspace) = self.workspace(workspace_id) else {
-            return;
-        };
-        let workspace_path = workspace.path_buf();
-        if !workspace_path.exists() {
-            self.notice = Some("宸ヤ綔鍖虹洰褰曚笉瀛樺湪锛屾棤娉曟柊寤哄璇濄€?.to_owned());
-            self.mark_ui_dirty();
-            return;
-        }
-
-        match spawn_new_session_terminal(&workspace_path) {
-            Ok(()) => {
-                self.notice = Some(
-                    "宸插湪鏂扮粓绔腑鎵撳紑 Codex 鏂板璇濄€傚紑濮嬭緭鍏ュ悗锛屼細璇濆垪琛ㄤ細鑷姩鍒锋柊銆?.to_owned(),
-                );
-                self.codex_home_refresh_due = Some(Instant::now() + Duration::from_secs(2));
-                self.mark_ui_dirty();
-            }
-            Err(error) => {
-                self.notice = Some(format!("鏃犳硶鏂板缓瀵硅瘽锛歿error}"));
-                self.mark_ui_dirty();
-            }
-        }
-    }
-
-    */
-
     fn create_new_session_for_workspace(&mut self, workspace_id: u64) {
         if self.codex_error.is_some() {
             self.notice = Some("Codex is unavailable, so a new conversation cannot be started.".to_owned());
@@ -1174,73 +1072,6 @@ fn apply_session_refresh_success(
 fn short_id(session_id: &str) -> String {
     session_id.chars().take(8).collect()
 }
-
-/*
-#[cfg(target_os = "windows")]
-fn spawn_new_session_terminal(workspace_path: &Path) -> Result<(), String> {
-    let cli_path = resolve_desktop_cli_path()?;
-    let script_path = env::temp_dir().join(format!(
-        "crl-new-session-{}.cmd",
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-    ));
-    let script = build_windows_new_session_script(&cli_path, workspace_path);
-    fs::write(&script_path, script)
-        .map_err(|error| format!("鏃犳硶鍐欏叆鏂板璇濆惎鍔ㄨ剼鏈細{error}"))?;
-
-    let mut command = Command::new("cmd.exe");
-    command
-        .arg("/d")
-        .arg("/c")
-        .arg("start")
-        .arg("")
-        .arg(script_path.as_os_str());
-    command
-        .spawn()
-        .map_err(|error| format!("鏃犳硶鍚姩鏂扮粓绔獥鍙ｏ細{error}"))?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn spawn_new_session_terminal(_workspace_path: &Path) -> Result<(), String> {
-    Err("Desktop new conversations are only supported on Windows.".to_owned())
-}
-
-#[cfg(target_os = "windows")]
-fn resolve_desktop_cli_path() -> Result<PathBuf, String> {
-    let current_exe = env::current_exe().map_err(|error| format!("鏃犳硶瀹氫綅褰撳墠绋嬪簭锛歿error}"))?;
-    let sibling = current_exe.with_file_name("crl.exe");
-    if sibling.exists() {
-        return Ok(sibling);
-    }
-
-    let mut where_command = Command::new("where.exe");
-    where_command.arg("crl");
-    let output = where_command
-        .output()
-        .map_err(|error| format!("鏃犳硶鍦?PATH 涓煡鎵?crl锛歿error}"))?;
-    if output.status.success() {
-        if let Some(path) = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-        {
-            return Ok(PathBuf::from(path));
-        }
-    }
-
-    Err("娌℃湁鎵惧埌鍙敤鐨?crl CLI锛岃纭 `crl.exe` 涓?crl-desktop.exe 鍚屽湪涓€涓洰褰曘€?.to_owned())
-}
-
-#[cfg(target_os = "windows")]
-fn build_windows_new_session_script(cli_path: &Path, workspace_path: &Path) -> String {
-    format!(
-        "@echo off\r\ncd /d \"{workspace}\"\r\n\"{cli}\" --new\r\ndel \"%~f0\" >nul 2>nul\r\n",
-        workspace = workspace_path.display(),
-        cli = cli_path.display(),
-    )
-}
-
-*/
 
 #[cfg(test)]
 fn format_terminal_output(logs: &VecDeque<LogEntry>) -> String {
