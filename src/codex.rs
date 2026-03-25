@@ -18,6 +18,8 @@ use walkdir::WalkDir;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const DEFAULT_RESUME_ROUNDS: u32 = 1;
+pub const NEW_SESSION_BOOTSTRAP_PROMPT: &str =
+    "\u{8FD9}\u{662F}\u{4E00}\u{4E2A}\u{65B0}\u{7684}\u{5BF9}\u{8BDD}\u{3002}";
 
 const RESUME_EXECUTION_CONTRACT: &str = "Execution contract:\n\
 - Do not ask the user whether to continue, whether to proceed, or whether they want another round.\n\
@@ -157,31 +159,29 @@ pub fn resolve_resume_command(session_id: &str, prompt: &str) -> Result<Command>
     Ok(prepare_resume_command(&launch, session_id, prompt))
 }
 
-pub fn prepare_new_session_command(launch: &CodexLaunch, prompt: Option<&str>) -> Command {
+pub fn prepare_new_session_command(launch: &CodexLaunch) -> Command {
     let mut command = launch.interactive_command();
-    if let Some(prompt) = prompt.map(str::trim).filter(|prompt| !prompt.is_empty()) {
-        command.arg(prompt);
-    }
+    command.arg(NEW_SESSION_BOOTSTRAP_PROMPT);
     command
 }
 
-pub fn resolve_new_session_command(prompt: Option<&str>) -> Result<Command> {
+pub fn resolve_new_session_command() -> Result<Command> {
     let launch = resolve_codex_launch()?;
-    Ok(prepare_new_session_command(&launch, prompt))
+    Ok(prepare_new_session_command(&launch))
 }
 
-pub fn prepare_new_session_exec_command(launch: &CodexLaunch, prompt: &str) -> Command {
+pub fn prepare_new_session_exec_command(launch: &CodexLaunch) -> Command {
     let mut command = launch.command();
     command
         .arg("exec")
         .arg("--skip-git-repo-check")
-        .arg(prompt.trim());
+        .arg(NEW_SESSION_BOOTSTRAP_PROMPT);
     command
 }
 
-pub fn resolve_new_session_exec_command(prompt: &str) -> Result<Command> {
+pub fn resolve_new_session_exec_command() -> Result<Command> {
     let launch = resolve_codex_launch()?;
-    Ok(prepare_new_session_exec_command(&launch, prompt))
+    Ok(prepare_new_session_exec_command(&launch))
 }
 
 pub fn resolve_codex_launch() -> Result<CodexLaunch> {
@@ -721,7 +721,7 @@ mod tests {
             prefix_args: vec![OsString::from(r"C:\mock\codex.js")],
         };
 
-        let command = prepare_new_session_command(&launch, Some("start fresh"));
+        let command = prepare_new_session_command(&launch);
         let args = command
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())
@@ -730,7 +730,10 @@ mod tests {
         assert_eq!(command.get_program(), Path::new("node.exe"));
         assert_eq!(
             args,
-            vec![r"C:\mock\codex.js".to_owned(), "start fresh".to_owned()]
+            vec![
+                r"C:\mock\codex.js".to_owned(),
+                NEW_SESSION_BOOTSTRAP_PROMPT.to_owned(),
+            ]
         );
     }
 
@@ -741,7 +744,7 @@ mod tests {
             prefix_args: vec![OsString::from(r"C:\mock\codex.js")],
         };
 
-        let command = prepare_new_session_exec_command(&launch, "start fresh");
+        let command = prepare_new_session_exec_command(&launch);
         let args = command
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())
@@ -754,7 +757,7 @@ mod tests {
                 r"C:\mock\codex.js".to_owned(),
                 "exec".to_owned(),
                 "--skip-git-repo-check".to_owned(),
-                "start fresh".to_owned(),
+                NEW_SESSION_BOOTSTRAP_PROMPT.to_owned(),
             ]
         );
     }

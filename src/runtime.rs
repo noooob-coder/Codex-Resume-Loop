@@ -91,7 +91,6 @@ pub fn spawn_workspace_runner(
 pub fn spawn_new_session_runner(
     workspace_id: u64,
     path: PathBuf,
-    prompt: String,
     sender: Sender<RuntimeEvent>,
 ) -> TaskHandle {
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -99,7 +98,7 @@ pub fn spawn_new_session_runner(
     let worker_stop = Arc::clone(&stop_flag);
     let worker_child = Arc::clone(&child_slot);
     let join = thread::spawn(move || {
-        run_new_session(workspace_id, path, prompt, sender, worker_stop, worker_child);
+        run_new_session(workspace_id, path, sender, worker_stop, worker_child);
     });
 
     TaskHandle {
@@ -334,20 +333,10 @@ fn run_workspace_loop(
 fn run_new_session(
     workspace_id: u64,
     path: PathBuf,
-    prompt: String,
     sender: Sender<RuntimeEvent>,
     stop_flag: Arc<AtomicBool>,
     child_slot: Arc<Mutex<Option<Child>>>,
 ) {
-    let trimmed_prompt = prompt.trim().to_owned();
-    if trimmed_prompt.is_empty() {
-        let _ = sender.send(RuntimeEvent::Finished {
-            workspace_id,
-            outcome: TaskOutcome::Error("Prompt cannot be empty.".to_owned()),
-        });
-        return;
-    }
-
     let _ = sender.send(RuntimeEvent::RoundStarted {
         workspace_id,
         current_round: 1,
@@ -374,7 +363,7 @@ fn run_new_session(
         }
     };
 
-    let mut command = prepare_new_session_exec_command(&launch, &trimmed_prompt);
+    let mut command = prepare_new_session_exec_command(&launch);
     command.current_dir(&path).stdout(Stdio::piped()).stderr(Stdio::piped());
     append_log(&format!(
         "spawning new-session codex process workspace_id={} cwd={}",

@@ -943,20 +943,12 @@ impl DesktopController {
             return;
         }
 
-        let prompt = workspace.prompt.trim().to_owned();
-        if prompt.is_empty() {
-            self.notice = Some("Prompt cannot be empty.".to_owned());
-            self.mark_ui_dirty();
-            return;
-        }
-
         if let Some(workspace) = self.workspace_mut(workspace_id) {
             workspace.clear_logs();
         }
         let handle = spawn_new_session_runner(
             workspace_id,
             workspace_path,
-            prompt,
             self.event_tx.clone(),
         );
         self.tasks.insert(workspace_id, handle);
@@ -1639,7 +1631,7 @@ mod tests {
             &workspace_dir.to_string_lossy(),
             "workspace",
         )];
-        controller.workspaces[0].prompt = "start fresh".to_owned();
+        controller.workspaces[0].prompt = "this should be ignored".to_owned();
         controller.selected_workspace_id = Some(1);
 
         controller.create_new_session_for_selected_workspace();
@@ -1668,7 +1660,7 @@ mod tests {
             vec![
                 "exec".to_owned(),
                 "--skip-git-repo-check".to_owned(),
-                "start fresh".to_owned(),
+                crate::codex::NEW_SESSION_BOOTSTRAP_PROMPT.to_owned(),
             ]
         );
         assert!(controller.workspaces[0].terminal_output.contains("> created"));

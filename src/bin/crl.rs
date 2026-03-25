@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use crl_desktop::codex::{
-    DEFAULT_RESUME_ROUNDS, build_resume_prompt, default_codex_home, discover_workspace_sessions,
-    resolve_new_session_command, resolve_resume_command,
+    DEFAULT_RESUME_ROUNDS, NEW_SESSION_BOOTSTRAP_PROMPT, build_resume_prompt,
+    default_codex_home, discover_workspace_sessions, resolve_new_session_command,
+    resolve_resume_command,
 };
 use crl_desktop::model::SessionSummary;
 use crl_desktop::persistence::config_dir_path;
@@ -82,7 +83,7 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
     let current_session = env::var("CODEX_THREAD_ID").ok();
 
     if cli.new_session {
-        return run_new_session(&workspace, cli.prompt.as_deref());
+        return run_new_session(&workspace);
     }
 
     let all_sessions = discover_workspace_sessions(&codex_home, &workspace)?;
@@ -114,7 +115,7 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
         if wizard_mode {
             println!("No resumable Codex sessions were found for the current workspace.");
             println!("Starting a new Codex conversation instead.");
-            return run_new_session(&workspace, None);
+            return run_new_session(&workspace);
         }
         bail!(
             "No resumable Codex sessions were found for the current workspace. Run `crl` interactively or `crl --new` to start a new conversation."
@@ -132,7 +133,7 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
 
     let session = match session {
         SessionTarget::Existing(session) => session,
-        SessionTarget::NewConversation => return run_new_session(&workspace, None),
+        SessionTarget::NewConversation => return run_new_session(&workspace),
     };
 
     if let Some(current) = current_session.as_deref()
@@ -209,14 +210,18 @@ fn validate_new_session_args(cli: &Cli) -> Result<()> {
     if cli.dry_run {
         bail!("`crl --new` cannot be combined with `--dry-run`.");
     }
+    if cli.prompt.is_some() {
+        bail!("`crl --new` uses a fixed bootstrap prompt and does not accept a custom prompt.");
+    }
 
     Ok(())
 }
 
-fn run_new_session(workspace: &Path, prompt: Option<&str>) -> Result<()> {
+fn run_new_session(workspace: &Path) -> Result<()> {
     println!("Starting a new Codex conversation in:");
     println!("  {}", workspace.display());
-    let mut command = resolve_new_session_command(prompt)
+    println!("  Bootstrap prompt: {}", NEW_SESSION_BOOTSTRAP_PROMPT);
+    let mut command = resolve_new_session_command()
         .context("Failed to build codex command for a new conversation")?;
     let status = command
         .current_dir(workspace)
@@ -906,6 +911,29 @@ mod tests {
     }
 
     #[test]
+    fn new_session_rejects_custom_prompt() {
+        let error = validate_new_session_args(&Cli {
+            install: false,
+            uninstall: false,
+            new_session: true,
+            session_id: None,
+            latest: false,
+            allow_current_session: false,
+            interactive: false,
+            list_sessions: false,
+            max_sessions: 20,
+            codex_home: None,
+            dry_run: false,
+            purge_history: false,
+            times: None,
+            prompt: Some("custom".to_owned()),
+        })
+        .expect_err("new session with custom prompt should fail");
+
+        assert!(error.to_string().contains("fixed bootstrap prompt"));
+    }
+
+    #[test]
     fn new_session_launches_plain_codex_without_resume_args() {
         let _guard = ENV_MUTEX.lock().expect("env mutex");
         let temp = tempdir().expect("tempdir");
@@ -946,7 +974,7 @@ mod tests {
             dry_run: false,
             purge_history: false,
             times: None,
-            prompt: Some("start fresh".to_owned()),
+            prompt: None,
         });
 
         env::set_current_dir(original_dir).expect("restore current dir");
@@ -961,7 +989,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         result.expect("new session run should succeed");
-        assert_eq!(captured_args, vec!["start fresh".to_owned()]);
+        assert_eq!(captured_args, vec![NEW_SESSION_BOOTSTRAP_PROMPT.to_owned()]);
     }
 
     #[cfg(target_os = "windows")]
