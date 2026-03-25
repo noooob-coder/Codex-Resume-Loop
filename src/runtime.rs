@@ -116,6 +116,7 @@ struct CodexStdoutFilter {
     keeping_line: bool,
     suppress_next_line: bool,
     suppress_next_numeric_line: bool,
+    suppress_shell_block: bool,
 }
 
 fn run_workspace_loop(
@@ -595,7 +596,7 @@ impl CodexStdoutFilter {
     }
 
     fn should_hold_line(&self) -> bool {
-        if self.suppress_next_line || self.suppress_next_numeric_line {
+        if self.suppress_shell_block || self.suppress_next_line || self.suppress_next_numeric_line {
             return true;
         }
         is_possible_filtered_prefix(&self.pending_line)
@@ -605,6 +606,13 @@ impl CodexStdoutFilter {
         let trimmed = self.pending_line.trim();
         if trimmed.is_empty() {
             return false;
+        }
+
+        if self.suppress_shell_block {
+            if trimmed.eq_ignore_ascii_case("</user_shell_command>") {
+                self.suppress_shell_block = false;
+            }
+            return true;
         }
 
         if self.suppress_next_line {
@@ -619,6 +627,10 @@ impl CodexStdoutFilter {
         }
 
         let lowered = trimmed.to_ascii_lowercase();
+        if lowered == "<user_shell_command>" {
+            self.suppress_shell_block = true;
+            return true;
+        }
         if lowered == "user" {
             self.suppress_next_line = true;
             return true;
@@ -630,7 +642,7 @@ impl CodexStdoutFilter {
             return true;
         }
 
-        starts_with_filtered_prefix(&lowered)
+        starts_with_filtered_prefix(&lowered) || is_internal_transcript_line(trimmed, &lowered)
     }
 
     fn finish_line(&mut self) {
@@ -673,9 +685,40 @@ fn is_possible_filtered_prefix(line: &str) -> bool {
         "codex",
         "--------",
         "tokens used",
+        "<user_shell_command>",
+        "! exec",
+        "! \"",
+        "! succeeded in",
+        "! exited",
+        "! e:\\",
     ]
     .iter()
     .any(|prefix| prefix.starts_with(&lowered))
+}
+
+fn is_internal_transcript_line(trimmed: &str, lowered: &str) -> bool {
+    lowered == "<command>"
+        || lowered == "</command>"
+        || lowered == "<result>"
+        || lowered == "</result>"
+        || lowered == "<user_shell_command>"
+        || lowered == "</user_shell_command>"
+        || lowered == "! exec"
+        || lowered.starts_with("! \"")
+        || lowered.starts_with("!  succeeded in")
+        || lowered.starts_with("! succeeded in")
+        || lowered.starts_with("!  exited")
+        || lowered.starts_with("! exited")
+        || lowered.starts_with("! e:\\")
+        || lowered.starts_with("! c:\\")
+        || (trimmed.starts_with("At line:") && lowered.contains("char:"))
+        || lowered.starts_with("+ ! ")
+        || lowered.starts_with("+   ~")
+        || lowered.starts_with("missing expression after unary operator")
+        || lowered.starts_with("unexpected token")
+        || lowered.starts_with("not all parse errors were reported")
+        || lowered.starts_with("    + categoryinfo")
+        || lowered.starts_with("    + fullyqualifiederrorid")
 }
 
 fn spawn_stream_reader<R>(
@@ -901,6 +944,26 @@ mod tests {
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {}
             other => panic!("expected no more chunks, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn codex_stdout_filter_removes_internal_shell_transcript_block() {
+        let mut filter = CodexStdoutFilter::default();
+        let chunk = "<user_shell_command>\n<command>\n! exec\n! \"C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"rg\"\n</command>\n<result>\n! E:\\project\\run_spider\\target\\debug\\build\\crl.rs:1\n</result>\n</user_shell_command>\n";
+        let output = filter.push(chunk);
+        let final_chunk = filter.finish();
+
+        assert!(output.is_empty());
+        assert!(final_chunk.is_empty());
+    }
+
+    #[test]
+    fn codex_stdout_filter_keeps_normal_assistant_lines() {
+        let mut filter = CodexStdoutFilter::default();
+        let output = filter.push("Waited for background terminal\n");
+        let final_chunk = filter.finish();
+
+        assert_eq!(output + &final_chunk, "Waited for background terminal\n");
     }
 
     #[test]
