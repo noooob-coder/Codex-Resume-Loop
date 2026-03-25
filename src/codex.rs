@@ -556,6 +556,10 @@ fn read_history_summaries(
             continue;
         }
 
+        if should_ignore_history_text(&entry.text) {
+            continue;
+        }
+
         let summary = summaries.entry(entry.session_id).or_default();
         let preview = single_line_preview(&entry.text, 72);
         if summary.first_text.is_none() {
@@ -568,6 +572,27 @@ fn read_history_summaries(
     }
 
     Ok(summaries)
+}
+
+fn should_ignore_history_text(text: &str) -> bool {
+    let compact = compact_inline_text(text);
+    if compact.is_empty() {
+        return true;
+    }
+
+    let lowered = compact.to_ascii_lowercase();
+    lowered.starts_with("continue from the exact previous stopping point and finish the unfinished work.")
+        || lowered.contains("\"type\":\"turn_context\"")
+        || lowered.contains("\"type\":\"response_item\"")
+        || lowered.contains("\"type\":\"function_call\"")
+        || lowered.contains("\"type\":\"event_msg\"")
+        || lowered.contains(".codex\\sessions\\")
+        || lowered.contains("rollout-")
+        || lowered.contains("# global instructions")
+        || lowered.contains("## mandatory bug-fix skill")
+        || lowered.contains("approval_policy")
+        || lowered.contains("sandbox_policy")
+        || lowered.contains("\"current_date\":")
 }
 
 fn single_line_preview(text: &str, max_len: usize) -> String {
@@ -685,6 +710,48 @@ mod tests {
         assert!(prompt.contains("Do not ask the user whether to continue"));
         assert!(prompt.contains("compare the current result against the original request"));
         assert!(!prompt.contains('\n'));
+    }
+
+    #[test]
+    fn ignores_internal_history_records_when_summarizing_sessions() {
+        let dir = tempdir().expect("tempdir");
+        let codex_home = dir.path().join(".codex");
+        let sessions_root = codex_home
+            .join("sessions")
+            .join("2026")
+            .join("03")
+            .join("25");
+        fs::create_dir_all(&sessions_root).expect("create sessions");
+
+        let workspace = dir.path().join("workspace-a");
+        fs::create_dir_all(&workspace).expect("create workspace");
+
+        fs::write(
+            sessions_root.join("a.jsonl"),
+            format!(
+                "{{\"timestamp\":\"2026-03-25T08:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"session-a\",\"timestamp\":\"2026-03-25T08:00:00.000Z\",\"cwd\":\"{}\"}}}}\n",
+                workspace.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .expect("write session");
+
+        let wrapped = build_resume_prompt("continue work")
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        fs::write(
+            codex_home.join("history.jsonl"),
+            format!(
+                "{{\"session_id\":\"session-a\",\"ts\":1774425600,\"text\":\"{wrapped}\"}}\n\
+                 {{\"session_id\":\"session-a\",\"ts\":1774429200,\"text\":\"real user task\"}}\n"
+            ),
+        )
+        .expect("write history");
+
+        let sessions = discover_workspace_sessions(&codex_home, &workspace).expect("discover");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "real user task");
+        assert_eq!(sessions[0].last_text, "real user task");
+        assert_eq!(sessions[0].message_count, 1);
     }
 
     #[test]

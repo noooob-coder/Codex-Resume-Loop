@@ -104,16 +104,18 @@ impl WorkspaceState {
     }
 
     pub fn push_log(&mut self, log: LogEntry) {
-        let rendered = format_terminal_entry(&log);
         let stream = log.stream;
         self.logs.push_back(log);
-        if !self.terminal_output.is_empty() && !self.terminal_output.ends_with('\n') {
-            self.terminal_output.push('\n');
+        if !matches!(stream, LogStream::System) {
+            let rendered = format_terminal_entry(self.logs.back().expect("just pushed log"));
+            if !self.terminal_output.is_empty() && !self.terminal_output.ends_with('\n') {
+                self.terminal_output.push('\n');
+            }
+            self.terminal_output.push_str(&rendered);
+            self.terminal_at_line_start = false;
+            self.terminal_stream = Some(stream);
+            self.trim_terminal_output();
         }
-        self.terminal_output.push_str(&rendered);
-        self.terminal_at_line_start = false;
-        self.terminal_stream = Some(stream);
-        self.trim_terminal_output();
         while self.logs.len() > MAX_LOG_LINES {
             self.logs.pop_front();
         }
@@ -340,8 +342,8 @@ mod tests {
             text: "working".into(),
         });
 
-        assert!(workspace.terminal_output.contains("# 准备开始"));
         assert!(workspace.terminal_output.contains("> working"));
+        assert!(!workspace.terminal_output.contains("# 准备开始"));
     }
 
     #[test]
