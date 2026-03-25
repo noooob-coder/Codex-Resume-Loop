@@ -10,6 +10,7 @@ $currentInstall = Join-Path $env:LOCALAPPDATA "Programs\Codex-Resume-Loop"
 $backupRoot = Join-Path $env:TEMP ("crl-install-migration-" + [guid]::NewGuid().ToString())
 $backupLegacyBin = Join-Path $backupRoot "legacy-bin"
 $backupLegacyInstall = Join-Path $backupRoot "legacy-install"
+$originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $result = $null
 
 function Restore-File($source, $destination) {
@@ -50,6 +51,12 @@ if (Test-Path $legacyInstall) {
 }
 
 try {
+    [Environment]::SetEnvironmentVariable(
+        "Path",
+        ($originalUserPath + ";" + $legacyInstall),
+        "User"
+    )
+
     Set-Content -Path (Join-Path $legacyBin "crl.exe") -Encoding ascii -Value "legacy"
     Set-Content -Path (Join-Path $legacyBin "codex-resume-loop.cmd") -Encoding ascii -Value "legacy"
     New-Item -ItemType Directory -Force -Path $legacyInstall | Out-Null
@@ -60,15 +67,22 @@ try {
         throw "Installer failed with exit code $($install.ExitCode)"
     }
 
+    $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $legacyPathStillPresent = ($updatedUserPath -split ';') | Where-Object {
+        $_.TrimEnd('\') -eq $legacyInstall.TrimEnd('\')
+    }
+
     $result = [pscustomobject]@{
         install_exit_code = $install.ExitCode
         current_install_exists = Test-Path (Join-Path $currentInstall "crl.exe")
         legacy_bin_crl_removed = -not (Test-Path (Join-Path $legacyBin "crl.exe"))
         legacy_bin_cmd_removed = -not (Test-Path (Join-Path $legacyBin "codex-resume-loop.cmd"))
         legacy_install_removed = -not (Test-Path $legacyInstall)
+        legacy_install_removed_from_user_path = -not [bool]$legacyPathStillPresent
     }
 }
 finally {
+    [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
     foreach ($name in $legacyBinFiles) {
         Restore-File (Join-Path $backupLegacyBin $name) (Join-Path $legacyBin $name)
     }

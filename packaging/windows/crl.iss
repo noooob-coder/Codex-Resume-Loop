@@ -108,6 +108,63 @@ begin
   DeleteIfPresent(Dir + 'codex-resume-loop');
 end;
 
+function DirLooksLikeLegacyCrInstall(Path: string): Boolean;
+var
+  Expanded: string;
+begin
+  Expanded := AddBackslash(Path);
+  Result :=
+    IsKnownLegacyInstallDir(Path) or
+    ((CompareText(ExtractFileName(NormalizeDir(Path)), 'CRL') = 0) and
+      (FileExists(Expanded + 'crl.exe') or FileExists(Expanded + 'codex-resume-loop.exe'))) or
+    ((CompareText(ExtractFileName(NormalizeDir(Path)), 'CODEX-RESUME-LOOP') = 0) and
+      (FileExists(Expanded + 'crl.exe') or FileExists(Expanded + 'codex-resume-loop.exe')));
+end;
+
+function PruneLegacyPathEntries(PathValue: string; CurrentApp: string): string;
+var
+  Remaining: string;
+  Item: string;
+  Delimiter: Integer;
+  Cleaned: string;
+  Normalized: string;
+begin
+  Remaining := PathValue;
+  Cleaned := '';
+  while Remaining <> '' do
+  begin
+    Delimiter := Pos(';', Remaining);
+    if Delimiter = 0 then
+    begin
+      Item := Remaining;
+      Remaining := '';
+    end
+    else
+    begin
+      Item := Copy(Remaining, 1, Delimiter - 1);
+      Delete(Remaining, 1, Delimiter);
+    end;
+
+    Normalized := NormalizeDir(Item);
+    if (Normalized = '') then
+      continue;
+    if Normalized = NormalizeDir(CurrentApp) then
+    begin
+      if Cleaned <> '' then
+        Cleaned := Cleaned + ';';
+      Cleaned := Cleaned + Item;
+      continue;
+    end;
+    if DirLooksLikeLegacyCrInstall(Item) then
+      continue;
+
+    if Cleaned <> '' then
+      Cleaned := Cleaned + ';';
+    Cleaned := Cleaned + Item;
+  end;
+  Result := Cleaned;
+end;
+
 procedure VisitCandidateDir(Path: string; CurrentApp: string; var Seen: string);
 var
   Normalized: string;
@@ -163,7 +220,11 @@ begin
   VisitCandidateDir(GetEnv('LOCALAPPDATA') + '\Programs\CRL', CurrentApp, Seen);
 
   if RegQueryStringValue(HKCU, 'Environment', 'Path', UserPath) then
+  begin
     VisitPathList(UserPath, CurrentApp, Seen);
+    UserPath := PruneLegacyPathEntries(UserPath, CurrentApp);
+    RegWriteExpandStringValue(HKCU, 'Environment', 'Path', UserPath);
+  end;
 
   VisitPathList(GetEnv('PATH'), CurrentApp, Seen);
 end;
