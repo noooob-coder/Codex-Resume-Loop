@@ -66,30 +66,106 @@ begin
   Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(OrigPath) + ';') = 0;
 end;
 
+function NormalizeDir(Path: string): string;
+begin
+  Result := Trim(Path);
+  if (Length(Result) >= 2) and (Result[1] = '"') and (Result[Length(Result)] = '"') then
+    Result := Copy(Result, 2, Length(Result) - 2);
+  StringChangeEx(Result, '/', '\', True);
+  while (Length(Result) > 0) and (Result[Length(Result)] = '\') do
+    Delete(Result, Length(Result), 1);
+  Result := Uppercase(Result);
+end;
+
+function IsKnownLegacyInstallDir(Path: string): Boolean;
+var
+  Normalized: string;
+begin
+  Normalized := NormalizeDir(Path);
+  Result :=
+    (Normalized = NormalizeDir(ExpandConstant('{localappdata}') + '\Programs\CRL')) or
+    (Normalized = NormalizeDir(GetEnv('LOCALAPPDATA') + '\Programs\CRL'));
+end;
+
 procedure DeleteIfPresent(Path: string);
 begin
   if FileExists(Path) then
     DeleteFile(Path);
 end;
 
+procedure DeleteLegacyArtifactsInDir(Path: string);
+var
+  Dir: string;
+begin
+  Dir := AddBackslash(Path);
+  DeleteIfPresent(Dir + 'crl.exe');
+  DeleteIfPresent(Dir + 'codex-resume-loop.exe');
+  DeleteIfPresent(Dir + 'crl.cmd');
+  DeleteIfPresent(Dir + 'codex-resume-loop.cmd');
+  DeleteIfPresent(Dir + 'crl.ps1');
+  DeleteIfPresent(Dir + 'codex-resume-loop.ps1');
+  DeleteIfPresent(Dir + 'crl');
+  DeleteIfPresent(Dir + 'codex-resume-loop');
+end;
+
+procedure VisitCandidateDir(Path: string; CurrentApp: string; var Seen: string);
+var
+  Normalized: string;
+begin
+  Normalized := NormalizeDir(Path);
+  if (Normalized = '') or (Normalized = NormalizeDir(CurrentApp)) then
+    exit;
+  if Pos(';' + Normalized + ';', Seen) > 0 then
+    exit;
+
+  Seen := Seen + Normalized + ';';
+  DeleteLegacyArtifactsInDir(Path);
+
+  if IsKnownLegacyInstallDir(Path) and DirExists(Path) then
+    DelTree(Path, True, True, True);
+end;
+
+procedure VisitPathList(PathValue: string; CurrentApp: string; var Seen: string);
+var
+  Remaining: string;
+  Item: string;
+  Delimiter: Integer;
+begin
+  Remaining := PathValue;
+  while Remaining <> '' do
+  begin
+    Delimiter := Pos(';', Remaining);
+    if Delimiter = 0 then
+    begin
+      Item := Remaining;
+      Remaining := '';
+    end
+    else
+    begin
+      Item := Copy(Remaining, 1, Delimiter - 1);
+      Delete(Remaining, 1, Delimiter);
+    end;
+
+    VisitCandidateDir(Item, CurrentApp, Seen);
+  end;
+end;
+
 procedure RemoveLegacyCliCopies();
 var
-  LegacyBinDir: string;
-  LegacyInstallDir: string;
+  Seen: string;
+  CurrentApp: string;
+  UserPath: string;
 begin
-  LegacyBinDir := AddBackslash(GetEnv('USERPROFILE')) + '.local\bin';
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl.exe');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop.exe');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl.cmd');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop.cmd');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl.ps1');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop.ps1');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'crl');
-  DeleteIfPresent(AddBackslash(LegacyBinDir) + 'codex-resume-loop');
+  CurrentApp := ExpandConstant('{app}');
+  Seen := ';' + NormalizeDir(CurrentApp) + ';';
 
-  LegacyInstallDir := AddBackslash(ExpandConstant('{localappdata}')) + 'Programs\CRL';
-  if DirExists(LegacyInstallDir) then
-    DelTree(LegacyInstallDir, True, True, True);
+  VisitCandidateDir(GetEnv('USERPROFILE') + '\.local\bin', CurrentApp, Seen);
+  VisitCandidateDir(GetEnv('LOCALAPPDATA') + '\Programs\CRL', CurrentApp, Seen);
+
+  if RegQueryStringValue(HKCU, 'Environment', 'Path', UserPath) then
+    VisitPathList(UserPath, CurrentApp, Seen);
+
+  VisitPathList(GetEnv('PATH'), CurrentApp, Seen);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
