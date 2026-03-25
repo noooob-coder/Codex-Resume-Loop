@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use crl_desktop::codex::{
     DEFAULT_RESUME_ROUNDS, NEW_SESSION_BOOTSTRAP_PROMPT, build_resume_prompt,
-    default_codex_home, discover_workspace_sessions, resolve_new_session_command,
-    resolve_resume_command,
+    default_codex_home, discover_workspace_sessions,
+    resolve_new_session_command_foreground, resolve_resume_command_foreground,
 };
 use crl_desktop::model::SessionSummary;
 use crl_desktop::persistence::config_dir_path;
@@ -164,7 +164,7 @@ fn run_resume_loop(cli: Cli) -> Result<()> {
 
     for round in 1..=times {
         println!("== Round {round}/{times} ==");
-        let mut command = resolve_resume_command(&session.session_id, &round_prompt)
+        let mut command = resolve_resume_command_foreground(&session.session_id, &round_prompt)
             .with_context(|| format!("Failed to build codex command for round {round}"))?;
         let status = command
             .current_dir(&workspace)
@@ -221,7 +221,7 @@ fn run_new_session(workspace: &Path) -> Result<()> {
     println!("Starting a new Codex conversation in:");
     println!("  {}", workspace.display());
     println!("  Bootstrap prompt: {}", NEW_SESSION_BOOTSTRAP_PROMPT);
-    let mut command = resolve_new_session_command()
+    let mut command = resolve_new_session_command_foreground()
         .context("Failed to build codex command for a new conversation")?;
     let status = command
         .current_dir(workspace)

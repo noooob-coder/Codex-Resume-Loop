@@ -38,6 +38,10 @@ impl CodexLaunch {
         self.command_with_window_hidden(true)
     }
 
+    pub fn foreground_command(&self) -> Command {
+        self.command_with_window_hidden(false)
+    }
+
     pub fn interactive_command(&self) -> Command {
         self.command_with_window_hidden(false)
     }
@@ -159,6 +163,26 @@ pub fn resolve_resume_command(session_id: &str, prompt: &str) -> Result<Command>
     Ok(prepare_resume_command(&launch, session_id, prompt))
 }
 
+pub fn prepare_resume_command_foreground(
+    launch: &CodexLaunch,
+    session_id: &str,
+    prompt: &str,
+) -> Command {
+    let mut command = launch.foreground_command();
+    command
+        .arg("exec")
+        .arg("resume")
+        .arg("--skip-git-repo-check")
+        .arg(session_id)
+        .arg(prompt);
+    command
+}
+
+pub fn resolve_resume_command_foreground(session_id: &str, prompt: &str) -> Result<Command> {
+    let launch = resolve_codex_launch()?;
+    Ok(prepare_resume_command_foreground(&launch, session_id, prompt))
+}
+
 pub fn prepare_new_session_command(launch: &CodexLaunch) -> Command {
     let mut command = launch.interactive_command();
     command.arg(NEW_SESSION_BOOTSTRAP_PROMPT);
@@ -168,6 +192,17 @@ pub fn prepare_new_session_command(launch: &CodexLaunch) -> Command {
 pub fn resolve_new_session_command() -> Result<Command> {
     let launch = resolve_codex_launch()?;
     Ok(prepare_new_session_command(&launch))
+}
+
+pub fn prepare_new_session_command_foreground(launch: &CodexLaunch) -> Command {
+    let mut command = launch.foreground_command();
+    command.arg(NEW_SESSION_BOOTSTRAP_PROMPT);
+    command
+}
+
+pub fn resolve_new_session_command_foreground() -> Result<Command> {
+    let launch = resolve_codex_launch()?;
+    Ok(prepare_new_session_command_foreground(&launch))
 }
 
 pub fn prepare_new_session_exec_command(launch: &CodexLaunch) -> Command {
@@ -857,6 +892,33 @@ mod tests {
     }
 
     #[test]
+    fn prepare_resume_command_foreground_keeps_launcher_prefix_args() {
+        let launch = CodexLaunch {
+            program: PathBuf::from("node.exe"),
+            prefix_args: vec![OsString::from(r"C:\mock\codex.js")],
+        };
+
+        let command = prepare_resume_command_foreground(&launch, "session-1", "restore exactly");
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), Path::new("node.exe"));
+        assert_eq!(
+            args,
+            vec![
+                r"C:\mock\codex.js".to_owned(),
+                "exec".to_owned(),
+                "resume".to_owned(),
+                "--skip-git-repo-check".to_owned(),
+                "session-1".to_owned(),
+                "restore exactly".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
     fn prepare_new_session_command_keeps_launcher_prefix_args() {
         let launch = CodexLaunch {
             program: PathBuf::from("node.exe"),
@@ -864,6 +926,29 @@ mod tests {
         };
 
         let command = prepare_new_session_command(&launch);
+        let args = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(command.get_program(), Path::new("node.exe"));
+        assert_eq!(
+            args,
+            vec![
+                r"C:\mock\codex.js".to_owned(),
+                NEW_SESSION_BOOTSTRAP_PROMPT.to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn prepare_new_session_command_foreground_keeps_launcher_prefix_args() {
+        let launch = CodexLaunch {
+            program: PathBuf::from("node.exe"),
+            prefix_args: vec![OsString::from(r"C:\mock\codex.js")],
+        };
+
+        let command = prepare_new_session_command_foreground(&launch);
         let args = command
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())

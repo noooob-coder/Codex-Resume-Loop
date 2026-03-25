@@ -772,7 +772,8 @@ fn forward_stream_chunks<R>(
 {
     let mut buffer = [0_u8; 4096];
     let mut decoder = Utf8ChunkDecoder::default();
-    let mut stdout_filter = matches!(stream, LogStream::Stdout).then(CodexStdoutFilter::default);
+    let mut stdout_filter =
+        matches!(stream, LogStream::Stdout | LogStream::Stderr).then(CodexStdoutFilter::default);
 
     loop {
         let read = match reader.read(&mut buffer) {
