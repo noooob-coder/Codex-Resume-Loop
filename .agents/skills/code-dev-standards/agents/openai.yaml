@@ -1,0 +1,3 @@
+interface:
+  display_name: "Code Dev Standards"
+  short_description: "代码编写、改写、重构、脚本和测试的默认规范与输出模板"

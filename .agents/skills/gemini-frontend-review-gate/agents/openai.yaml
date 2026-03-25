@@ -1,0 +1,3 @@
+interface:
+  display_name: "Gemini Frontend Review Gate"
+  short_description: "Have Gemini implement UI with --yolo, then use Codex as reviewer."
