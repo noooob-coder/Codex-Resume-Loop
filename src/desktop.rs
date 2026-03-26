@@ -476,8 +476,13 @@ impl DesktopController {
                 })
                 .map(|index| index as i32)
                 .unwrap_or(-1);
+            let (selected_session_title, selected_session_subtitle) =
+                selected_session_panel_text(selected);
+            ui.set_selected_session_index(-1);
             ui.set_session_rows(ModelRc::from(Rc::new(VecModel::from(session_rows))));
             ui.set_session_options(ModelRc::from(Rc::new(VecModel::from(session_options))));
+            ui.set_selected_session_title(selected_session_title);
+            ui.set_selected_session_subtitle(selected_session_subtitle);
             ui.set_selected_session_index(session_index);
 
             ui.set_terminal_output(selected.terminal_output.clone().into());
@@ -497,6 +502,8 @@ impl DesktopController {
             ui.set_session_options(ModelRc::from(Rc::new(VecModel::from(
                 Vec::<SharedString>::new(),
             ))));
+            ui.set_selected_session_title(SharedString::default());
+            ui.set_selected_session_subtitle(SharedString::default());
             ui.set_selected_session_index(-1);
             ui.set_terminal_output(SharedString::default());
         }
@@ -580,6 +587,9 @@ impl DesktopController {
             return;
         };
         self.selected_workspace_id = Some(workspace_id);
+        if let Some(workspace) = self.selected_workspace_mut() {
+            workspace.ensure_selected_session();
+        }
         self.dirty = true;
         self.mark_ui_dirty();
     }
@@ -1069,6 +1079,23 @@ fn apply_session_refresh_success(
     }
 }
 
+fn selected_session_panel_text(workspace: &WorkspaceState) -> (SharedString, SharedString) {
+    workspace
+        .selected_session()
+        .map(|session| {
+            (
+                format!("{} · {}", short_id(&session.session_id), session.title).into(),
+                format!(
+                    "{} · {}",
+                    session.last_activity.format("%m-%d %H:%M"),
+                    session.last_text
+                )
+                .into(),
+            )
+        })
+        .unwrap_or_else(|| (SharedString::default(), SharedString::default()))
+}
+
 fn short_id(session_id: &str) -> String {
     session_id.chars().take(8).collect()
 }
@@ -1307,6 +1334,87 @@ mod tests {
         let mut controller = sample_controller();
         controller.select_workspace(-1);
         assert_eq!(controller.selected_workspace_id, Some(1));
+    }
+
+    #[test]
+    fn select_workspace_uses_target_workspaces_own_selected_session() {
+        let mut controller = sample_controller();
+        controller.workspaces[0].sessions = vec![SessionSummary {
+            session_id: "session-a".into(),
+            title: "alpha".into(),
+            last_text: "alpha".into(),
+            last_activity: Local::now(),
+            file_path: PathBuf::from("a"),
+            message_count: 1,
+        }];
+        controller.workspaces[0].selected_session_id = Some("session-a".into());
+
+        controller.workspaces[1].sessions = vec![
+            SessionSummary {
+                session_id: "session-b".into(),
+                title: "beta".into(),
+                last_text: "beta".into(),
+                last_activity: Local::now(),
+                file_path: PathBuf::from("b"),
+                message_count: 1,
+            },
+            SessionSummary {
+                session_id: "session-c".into(),
+                title: "gamma".into(),
+                last_text: "gamma".into(),
+                last_activity: Local::now(),
+                file_path: PathBuf::from("c"),
+                message_count: 1,
+            },
+        ];
+        controller.workspaces[1].selected_session_id = None;
+
+        controller.select_workspace(1);
+
+        assert_eq!(controller.selected_workspace_id, Some(2));
+        assert_eq!(
+            controller.workspaces[1].selected_session_id.as_deref(),
+            Some("session-b")
+        );
+        assert_eq!(
+            controller.workspaces[0].selected_session_id.as_deref(),
+            Some("session-a")
+        );
+    }
+
+    #[test]
+    fn selected_session_panel_text_uses_current_workspaces_session() {
+        let mut first = sample_workspace(1, r"E:\one", "one");
+        first.sessions = vec![SessionSummary {
+            session_id: "session-a".into(),
+            title: "alpha".into(),
+            last_text: "first detail".into(),
+            last_activity: Local::now(),
+            file_path: PathBuf::from("a"),
+            message_count: 1,
+        }];
+        first.selected_session_id = Some("session-a".into());
+
+        let mut second = sample_workspace(2, r"E:\two", "two");
+        second.sessions = vec![SessionSummary {
+            session_id: "session-b".into(),
+            title: "beta".into(),
+            last_text: "second detail".into(),
+            last_activity: Local::now(),
+            file_path: PathBuf::from("b"),
+            message_count: 1,
+        }];
+        second.selected_session_id = Some("session-b".into());
+
+        let (first_title, first_subtitle) = selected_session_panel_text(&first);
+        let (second_title, second_subtitle) = selected_session_panel_text(&second);
+
+        assert!(first_title.contains("alpha"));
+        assert!(first_subtitle.contains("first detail"));
+        assert!(second_title.contains("beta"));
+        assert!(second_subtitle.contains("second detail"));
+        assert_ne!(first_title, second_title);
+        assert_ne!(first_subtitle, second_subtitle);
     }
 
     #[test]

@@ -18,13 +18,16 @@ use walkdir::WalkDir;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const DEFAULT_RESUME_ROUNDS: u32 = 1;
+pub const WORKSPACE_DELETE_BOUNDARY_RULE: &str =
+    "\u{6CE8}\u{610F}\u{FF1A}\u{53EA}\u{5141}\u{8BB8}\u{5220}\u{9664}\u{672C}\u{6587}\u{4EF6}\u{5939}\u{5185}\u{7684}\u{6587}\u{4EF6}\u{FF0C}\u{672C}\u{6587}\u{4EF6}\u{5939}\u{5916}\u{7684}\u{4EFB}\u{4F55}\u{6587}\u{4EF6}\u{90FD}\u{4E0D}\u{5141}\u{8BB8}\u{5220}\u{9664}\u{3002}";
 pub const NEW_SESSION_BOOTSTRAP_PROMPT: &str =
-    "\u{8FD9}\u{662F}\u{4E00}\u{4E2A}\u{65B0}\u{7684}\u{5BF9}\u{8BDD}\u{3002}";
+    "\u{8FD9}\u{662F}\u{4E00}\u{4E2A}\u{65B0}\u{7684}\u{5BF9}\u{8BDD}\u{3002} \u{6CE8}\u{610F}\u{FF1A}\u{53EA}\u{5141}\u{8BB8}\u{5220}\u{9664}\u{672C}\u{6587}\u{4EF6}\u{5939}\u{5185}\u{7684}\u{6587}\u{4EF6}\u{FF0C}\u{672C}\u{6587}\u{4EF6}\u{5939}\u{5916}\u{7684}\u{4EFB}\u{4F55}\u{6587}\u{4EF6}\u{90FD}\u{4E0D}\u{5141}\u{8BB8}\u{5220}\u{9664}\u{3002}";
 
 const RESUME_EXECUTION_CONTRACT: &str = "Execution contract:\n\
 - Do not ask the user whether to continue, whether to proceed, or whether they want another round.\n\
 - Continue from the exact previous stopping point and keep working until the original request is fully satisfied.\n\
 - When you think you are done, compare the current result against the original request item by item. If anything is missing, continue and fill the gap instead of stopping.\n\
+- 注意：只允许删除本文件夹内的文件，本文件夹外的任何文件都不允许删除。\n\
 - Only stop early for a real blocker that cannot be resolved locally, such as a missing dependency, missing permission, or unavailable required input that cannot be inferred.";
 
 #[derive(Debug, Clone)]
@@ -795,7 +798,14 @@ mod tests {
         assert!(prompt.contains("restore exactly"));
         assert!(prompt.contains("Do not ask the user whether to continue"));
         assert!(prompt.contains("compare the current result against the original request"));
+        assert!(prompt.contains(WORKSPACE_DELETE_BOUNDARY_RULE));
         assert!(!prompt.contains('\n'));
+    }
+
+    #[test]
+    fn new_session_bootstrap_prompt_includes_delete_boundary_rule() {
+        assert!(NEW_SESSION_BOOTSTRAP_PROMPT.contains("这是一个新的对话。"));
+        assert!(NEW_SESSION_BOOTSTRAP_PROMPT.contains(WORKSPACE_DELETE_BOUNDARY_RULE));
     }
 
     #[test]

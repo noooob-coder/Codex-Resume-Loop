@@ -3,7 +3,6 @@ import {
     CheckBox,
     ComboBox,
     LineEdit,
-    ListView,
     ScrollView,
     TextEdit,
 } from "std-widgets.slint";
@@ -177,6 +176,8 @@ export component MainWindow inherits Window {
     in property <[SessionRow]> session_rows;
     in property <int> selected_session_index;
     in property <[string]> session_options;
+    in property <string> selected_session_title;
+    in property <string> selected_session_subtitle;
     in property <string> terminal_output;
 
     private property <color> selected_status_fill: 
@@ -310,18 +311,18 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         VerticalLayout {
                             spacing: 2px;
-                            Text { text: "Codex 目录"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                            Text { text: "Codex 目录"; color: #6c5c4b; font-size: 11px; font-weight: 700; }
                             HorizontalLayout {
                                 spacing: 6px;
                                 LineEdit {
                                     text <=> root.codex_home;
-                                    font-size: 12px;
+                                    font-size: 14px;
                                     edited(text) => { root.codex_home_edited(text); }
                                 }
                                 GhostButton {
                                     label: "浏览";
-                                    min-width: 50px;
-                                    min-height: 28px;
+                                    min-width: 60px;
+                                    min-height: 30px;
                                     clicked => { root.browse_codex_home(); }
                                 }
                             }
@@ -333,24 +334,18 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         VerticalLayout {
                             spacing: 2px;
-                            Text { text: "添加项目"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                            Text { text: "添加项目"; color: #6c5c4b; font-size: 11px; font-weight: 700; }
                             HorizontalLayout {
                                 spacing: 6px;
                                 LineEdit {
                                     text <=> root.add_path;
-                                    font-size: 12px;
+                                    font-size: 14px;
                                     edited(text) => { root.add_path_edited(text); }
-                                }
-                                ActionButton {
-                                    label: "添加";
-                                    min-width: 50px;
-                                    min-height: 28px;
-                                    clicked => { root.add_workspace(); }
                                 }
                                 GhostButton {
                                     label: "浏览";
-                                    min-width: 50px;
-                                    min-height: 28px;
+                                    min-width: 60px;
+                                    min-height: 30px;
                                     clicked => { root.browse_workspace(); }
                                 }
                             }
@@ -359,11 +354,11 @@ export component MainWindow inherits Window {
 
                     VerticalLayout {
                         spacing: 2px;
-                        width: 140px;
-                        Text { text: "名称筛选"; color: #6c5c4b; font-size: 10px; font-weight: 700; }
+                        width: 160px;
+                        Text { text: "名称筛选"; color: #6c5c4b; font-size: 11px; font-weight: 700; }
                         LineEdit {
                             text <=> root.filter_text;
-                            font-size: 12px;
+                            font-size: 14px;
                             edited(text) => { root.filter_edited(text); }
                         }
                     }
@@ -434,33 +429,38 @@ export component MainWindow inherits Window {
                         font-weight: 700;
                     }
 
-                    ListView {
-                        height: parent.height - 100px;
-                        for workspace[index] in root.workspace_rows : Rectangle {
-                            min-height: 64px;
-                            border-radius: 8px;
-                            border-width: 1px;
-                            border-color: root.selected_workspace_index == index ? #8a552a : #e5d1b8;
-                            background: root.selected_workspace_index == index ? #f6eadb : #fffdf9;
+                    ScrollView {
+                        vertical-stretch: 1;
+                        viewport-width: self.width;
+                        VerticalLayout {
+                            spacing: 8px;
+                            padding-right: 12px;
+                            for workspace[index] in root.workspace_rows : Rectangle {
+                                min-height: 64px;
+                                border-radius: 8px;
+                                border-width: 1px;
+                                border-color: root.selected_workspace_index == index ? #8a552a : #e5d1b8;
+                                background: root.selected_workspace_index == index ? #f6eadb : #fffdf9;
 
-                            VerticalLayout {
-                                padding: 8px;
-                                spacing: 2px;
-                                Text {
-                                    text: workspace.name;
-                                    color: #2b231c;
-                                    font-size: 14px;
-                                    font-weight: 700;
+                                VerticalLayout {
+                                    padding: 8px;
+                                    spacing: 2px;
+                                    Text {
+                                        text: workspace.name;
+                                        color: #2b231c;
+                                        font-size: 14px;
+                                        font-weight: 700;
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text { text: workspace.status; color: #8a552a; font-size: 10px; font-weight: 700; }
+                                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                                        Text { text: workspace.sessions + " 会话"; color: #6c5c4b; font-size: 10px; }
+                                    }
                                 }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Text { text: workspace.status; color: #8a552a; font-size: 10px; font-weight: 700; }
-                                    Rectangle { horizontal-stretch: 1; background: transparent; }
-                                    Text { text: workspace.sessions + " 会话"; color: #6c5c4b; font-size: 10px; }
-                                }
+
+                                TouchArea { clicked => { root.select_workspace(index); } }
                             }
-
-                            TouchArea { clicked => { root.select_workspace(index); } }
                         }
                     }
                 }
@@ -629,8 +629,8 @@ export component MainWindow inherits Window {
                                             VerticalLayout {
                                                 padding: 10px;
                                                 spacing: 2px;
-                                                Text { text: root.session_rows[root.selected_session_index].title; color: #2b231c; font-size: 13px; font-weight: 700; wrap: word-wrap; }
-                                                Text { text: root.session_rows[root.selected_session_index].subtitle; color: #6c5c4b; font-size: 11px; wrap: word-wrap; }
+                                                Text { text: root.selected_session_title; color: #2b231c; font-size: 13px; font-weight: 700; wrap: word-wrap; }
+                                                Text { text: root.selected_session_subtitle; color: #6c5c4b; font-size: 11px; wrap: word-wrap; }
                                             }
                                         }
                                     }

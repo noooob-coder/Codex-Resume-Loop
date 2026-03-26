@@ -2,8 +2,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use crl_desktop::codex::{
     DEFAULT_RESUME_ROUNDS, NEW_SESSION_BOOTSTRAP_PROMPT, build_resume_prompt,
-    default_codex_home, discover_workspace_sessions,
-    resolve_new_session_command_foreground, resolve_resume_command_foreground,
+    default_codex_home, discover_workspace_sessions, resolve_new_session_command_foreground,
+    resolve_resume_command_foreground,
 };
 use crl_desktop::model::SessionSummary;
 use crl_desktop::persistence::config_dir_path;
@@ -16,6 +16,8 @@ use std::process::ExitStatus;
 
 #[cfg(target_os = "windows")]
 use std::process::Command;
+#[cfg(test)]
+use crl_desktop::codex::WORKSPACE_DELETE_BOUNDARY_RULE;
 
 #[derive(Debug, Parser)]
 #[command(name = "crl", about = "Codex Resume Loop CLI")]
@@ -860,6 +862,7 @@ mod tests {
         assert!(captured_args[4].contains("restore exactly"));
         assert!(captured_args[4].contains("Do not ask the user whether to continue"));
         assert!(captured_args[4].contains("compare the current result against the original request"));
+        assert!(captured_args[4].contains(WORKSPACE_DELETE_BOUNDARY_RULE));
         let error = result.expect_err("non-zero round summary should error");
         assert!(error.to_string().contains("Completed 2 rounds"));
     }
