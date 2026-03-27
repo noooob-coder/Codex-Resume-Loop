@@ -199,3 +199,7 @@ crl --dry-run 3 "继续上一次结束的位置，完成未完成的工作。"
 cargo test
 cargo check
 ```
+
+## 致谢
+
+- 感谢 LinuxDo 社区的交流、分享与反馈。
