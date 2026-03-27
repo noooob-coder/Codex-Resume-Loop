@@ -202,4 +202,4 @@ cargo check
 
 ## 致谢
 
-- 感谢 LinuxDo 社区的交流、分享与反馈。
+- 感谢 [LinuxDo](https://linux.do/) 社区的交流、分享与反馈。
